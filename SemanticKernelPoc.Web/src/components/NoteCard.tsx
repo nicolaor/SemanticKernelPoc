@@ -110,12 +110,17 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
     <div className="w-full max-w-2xl mx-auto">
       {/* Header */}
       <div 
-        className="mb-3 p-3 bg-gradient-to-r from-slate-50 to-emerald-50 rounded-lg border border-slate-200/50"
+        className="mb-3 p-3 rounded-lg"
+        style={{
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-primary)'
+        }}
         title={`Notes overview showing ${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`}
       >
         <div className="flex items-center space-x-2">
           <div 
-            className="w-8 h-8 bg-gradient-to-r from-emerald-500 to-green-600 rounded-lg flex items-center justify-center shadow-sm"
+            className="w-8 h-8 rounded-lg flex items-center justify-center shadow-sm"
+            style={{ background: 'var(--accent-primary)' }}
             title="Notes icon"
           >
             <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -124,13 +129,15 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
           </div>
           <div>
             <h3 
-              className="text-lg font-bold text-slate-800"
+              className="text-lg font-bold"
+              style={{ color: 'var(--text-primary)', fontWeight: '700' }}
               title={`${notes.length} ${notes.length === 1 ? 'note' : 'notes'} found`}
             >
               {notes.length === 1 ? 'Note' : `${notes.length} Notes`}
             </h3>
             <p 
-              className="text-sm text-slate-600"
+              className="text-sm"
+              style={{ color: 'var(--text-secondary)' }}
               title="Your recent notes and tasks from Microsoft To Do"
             >
               Your recent notes and tasks
@@ -148,7 +155,11 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
             return (
               <div
                 key={note.id || index}
-                className="group bg-white border border-slate-200/60 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
+                className="group rounded-xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
+                style={{
+                  background: 'var(--card-bg)',
+                  border: '1px solid var(--border-primary)'
+                }}
               >
                 {/* Note Color Bar */}
                 <div 
@@ -164,7 +175,8 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1 min-w-0">
                       <h4 
-                        className="text-base font-semibold text-slate-900 mb-1 group-hover:text-slate-700 transition-colors"
+                        className="text-base font-semibold mb-1 transition-colors"
+                        style={{ color: 'var(--text-primary)', fontWeight: '600' }}
                         title={`Note: ${note.title}`}
                       >
                         {note.title}
@@ -172,7 +184,8 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                       
                       {note.content && note.content !== note.title && (
                         <p 
-                          className="text-sm text-slate-600 mb-2 line-clamp-2"
+                          className="text-sm mb-2 line-clamp-2"
+                          style={{ color: 'var(--text-secondary)' }}
                           title={`Note content: ${note.content}`}
                         >
                           {note.content}
@@ -219,7 +232,12 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                           href={note.webLink}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors duration-200"
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors duration-200"
+                          style={{ 
+                            background: 'var(--accent-primary)'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-secondary)'}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent-primary)'}
                           title="Open in Microsoft To Do"
                         >
                           <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
@@ -238,16 +256,18 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                     {note.dueDateFormatted && (
                       <div className="flex items-center space-x-2">
                         <div 
-                          className="w-6 h-6 bg-red-100 rounded-md flex items-center justify-center"
+                          className="w-6 h-6 rounded-md flex items-center justify-center"
+                          style={{ background: 'var(--bg-tertiary)' }}
                           title="Task due date"
                         >
-                          <svg className="w-3 h-3 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                          <svg className="w-3 h-3 text-red-500" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
                           </svg>
                         </div>
                         <div className="min-w-0 flex-1">
                           <p 
-                            className="text-slate-900 font-medium"
+                            className="font-medium"
+                            style={{ color: 'var(--text-primary)' }}
                             title={`Task due date: ${note.dueDateFormatted}`}
                           >
                             Due: {note.dueDateFormatted}
@@ -259,16 +279,18 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                     {/* List/Category */}
                     <div className="flex items-center space-x-2">
                       <div 
-                        className="w-6 h-6 bg-blue-100 rounded-md flex items-center justify-center"
+                        className="w-6 h-6 rounded-md flex items-center justify-center"
+                        style={{ background: 'var(--bg-tertiary)' }}
                         title="Task list/category"
                       >
-                        <svg className="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                        <svg className="w-3 h-3 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
                         <p 
-                          className="text-slate-900 font-medium truncate"
+                          className="font-medium truncate"
+                          style={{ color: 'var(--text-primary)' }}
                           title={`Task list: ${note.list}`}
                         >
                           {note.list}
@@ -279,16 +301,18 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                     {/* Created Date */}
                     <div className="flex items-center space-x-2 md:col-span-2">
                       <div 
-                        className="w-6 h-6 bg-gray-100 rounded-md flex items-center justify-center"
+                        className="w-6 h-6 rounded-md flex items-center justify-center"
+                        style={{ background: 'var(--bg-tertiary)' }}
                         title="Task creation date"
                       >
-                        <svg className="w-3 h-3 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+                        <svg className="w-3 h-3 text-green-500" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
                         <p 
-                          className="text-slate-900 font-medium"
+                          className="font-medium"
+                          style={{ color: 'var(--text-primary)' }}
                           title={`Task created on: ${note.created}`}
                         >
                           Created: {note.created}
@@ -302,13 +326,27 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
           })
         ) : (
           /* No notes */
-          <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-6 text-center">
-            <div className="w-12 h-12 bg-slate-300 rounded-full flex items-center justify-center mx-auto mb-3">
-              <svg className="w-6 h-6 text-slate-500" fill="currentColor" viewBox="0 0 20 20">
+          <div 
+            className="rounded-xl p-6 text-center"
+            style={{
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-primary)'
+            }}
+          >
+            <div 
+              className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3"
+              style={{ background: 'var(--bg-tertiary)' }}
+            >
+              <svg 
+                className="w-6 h-6"
+                style={{ color: 'var(--text-tertiary)' }}
+                fill="currentColor" 
+                viewBox="0 0 20 20"
+              >
                 <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
               </svg>
             </div>
-            <p className="text-slate-600">
+            <p style={{ color: 'var(--text-secondary)' }}>
               No notes found
             </p>
           </div>

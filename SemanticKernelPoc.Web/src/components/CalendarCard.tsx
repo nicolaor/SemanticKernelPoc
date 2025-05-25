@@ -107,7 +107,7 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
     setShowAttendees(eventId);
   };
 
-  // Close bubble on scroll or resize
+  // Close bubble on scroll, resize, or click outside
   useEffect(() => {
     const handleScrollOrResize = () => {
       if (showAttendees) {
@@ -116,12 +116,30 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
       }
     };
 
-    window.addEventListener('scroll', handleScrollOrResize, true);
-    window.addEventListener('resize', handleScrollOrResize);
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showAttendees) {
+        // Check if the click is outside the bubble and not on the attendee button
+        const target = event.target as Element;
+        const bubble = document.querySelector('[data-attendee-bubble]');
+        const attendeeButton = document.querySelector(`[data-attendee-button="${showAttendees}"]`);
+        
+        if (bubble && !bubble.contains(target) && attendeeButton && !attendeeButton.contains(target)) {
+          setShowAttendees(null);
+          setButtonRect(null);
+        }
+      }
+    };
+
+    if (showAttendees) {
+      window.addEventListener('scroll', handleScrollOrResize, true);
+      window.addEventListener('resize', handleScrollOrResize);
+      document.addEventListener('mousedown', handleClickOutside);
+    }
 
     return () => {
       window.removeEventListener('scroll', handleScrollOrResize, true);
       window.removeEventListener('resize', handleScrollOrResize);
+      document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showAttendees]);
 
@@ -144,17 +162,31 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
 
     return createPortal(
       <div
-        style={bubbleStyle}
-        className="bg-white border border-gray-200 rounded-lg shadow-lg p-3"
+        style={{
+          ...bubbleStyle,
+          background: 'var(--card-bg)',
+          border: '1px solid var(--border-primary)',
+          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)'
+        }}
+        className="rounded-lg p-3"
+        data-attendee-bubble
       >
         <div className="flex items-center justify-between mb-2">
-          <h4 className="text-sm font-semibold text-gray-900">Attendees</h4>
+          <h4 
+            className="text-sm font-semibold"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            Attendees
+          </h4>
           <button
             onClick={() => {
               setShowAttendees(null);
               setButtonRect(null);
             }}
-            className="text-gray-400 hover:text-gray-600"
+            className="transition-colors"
+            style={{ color: 'var(--text-tertiary)' }}
+            onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
+            onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-tertiary)'}
           >
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
@@ -163,18 +195,33 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
         </div>
         <div className="space-y-2 max-h-40 overflow-y-auto">
           {event.Attendees.map((attendee, idx) => (
-            <div key={idx} className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
-              <div className="w-6 h-6 bg-purple-100 rounded-full flex items-center justify-center">
-                <svg className="w-3 h-3 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+            <div 
+              key={idx} 
+              className="flex items-center space-x-2 p-2 rounded"
+              style={{ background: 'var(--bg-secondary)' }}
+            >
+              <div 
+                className="w-6 h-6 rounded-full flex items-center justify-center"
+                style={{ background: 'var(--accent-primary)20' }}
+              >
+                <svg className="w-3 h-3 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">
+                <p 
+                  className="text-sm font-medium truncate"
+                  style={{ color: 'var(--text-primary)' }}
+                >
                   {attendee.Name || attendee.Email}
                 </p>
                 {attendee.Name && attendee.Email && attendee.Name !== attendee.Email && (
-                  <p className="text-xs text-gray-500 truncate">{attendee.Email}</p>
+                  <p 
+                    className="text-xs truncate"
+                    style={{ color: 'var(--text-tertiary)' }}
+                  >
+                    {attendee.Email}
+                  </p>
                 )}
               </div>
               <div className="flex-shrink-0">
@@ -199,12 +246,17 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
     <div className="w-full max-w-2xl mx-auto">
       {/* Compact Header */}
       <div 
-        className="mb-3 p-3 bg-gradient-to-r from-slate-50 to-blue-50 rounded-lg border border-slate-200/50"
+        className="mb-3 p-3 rounded-lg"
+        style={{
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-primary)'
+        }}
         title={`Calendar overview showing ${data.Count} ${data.Count === 1 ? 'event' : 'events'} for ${data.TimeRange}`}
       >
         <div className="flex items-center space-x-2">
           <div 
-            className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-sm"
+            className="w-8 h-8 rounded-lg flex items-center justify-center shadow-sm"
+            style={{ background: 'var(--accent-primary)' }}
             title="Calendar icon"
           >
             <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -213,13 +265,15 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
           </div>
           <div>
             <h3 
-              className="text-lg font-bold text-slate-800"
+              className="text-lg font-bold"
+              style={{ color: 'var(--text-primary)', fontWeight: '700' }}
               title={`${data.Count} ${data.Count === 1 ? 'calendar event' : 'calendar events'} found`}
             >
               {data.Count === 1 ? 'Calendar Event' : `${data.Count} Events`}
             </h3>
             <p 
-              className="text-sm text-slate-600"
+              className="text-sm"
+              style={{ color: 'var(--text-secondary)' }}
               title={`Time period: ${data.TimeRange} | User: ${data.UserName}`}
             >
               {data.TimeRange} • {data.UserName}
@@ -241,7 +295,11 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
             return (
               <div
                 key={event.Id || index}
-                className="group bg-white border border-slate-200/60 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
+                className="group rounded-xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
+                style={{
+                  background: 'var(--card-bg)',
+                  border: '1px solid var(--border-primary)'
+                }}
               >
                 {/* Event Color Bar */}
                 <div 
@@ -257,7 +315,8 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1 min-w-0">
                       <h4 
-                        className="text-base font-semibold text-slate-900 mb-1 truncate group-hover:text-slate-700 transition-colors"
+                        className="text-base font-semibold mb-1 truncate transition-colors"
+                        style={{ color: 'var(--text-primary)', fontWeight: '600' }}
                         title={`Event: ${event.Subject}`}
                       >
                         {event.Subject}
@@ -266,7 +325,8 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
                       {/* Duration on dedicated line */}
                       <div className="mb-2">
                         <span 
-                          className="text-sm text-slate-600 font-medium"
+                          className="text-sm font-medium"
+                          style={{ color: 'var(--text-secondary)' }}
                           title={`Event duration: ${duration} (from ${formatDateTime(event.Start).time} to ${formatDateTime(event.End).time})`}
                         >
                           Duration: {duration}
@@ -276,7 +336,11 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
                       <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                         {event.IsAllDay && (
                           <span 
-                            className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-100 text-emerald-700"
+                            className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium"
+                            style={{ 
+                              background: 'var(--bg-tertiary)', 
+                              color: 'var(--text-primary)' 
+                            }}
                             title="This is an all-day event with no specific start/end times"
                           >
                             All Day
@@ -285,8 +349,15 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
                         {event.AttendeeCount && event.AttendeeCount > 0 && (
                           <button
                             onClick={(e) => handleAttendeeClick(event.Id, e.currentTarget)}
-                            className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors cursor-pointer"
+                            className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium transition-colors cursor-pointer"
+                            style={{ 
+                              background: 'var(--bg-tertiary)', 
+                              color: 'var(--text-primary)' 
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--border-primary)'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = 'var(--bg-tertiary)'}
                             title="Click to see attendees"
+                            data-attendee-button={event.Id}
                           >
                             <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                               <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z" />
@@ -304,7 +375,10 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
                           href={event.WebLink}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors duration-200"
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors duration-200"
+                          style={{ background: 'var(--accent-primary)' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-secondary)'}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent-primary)'}
                           title="Open in Outlook"
                         >
                           <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
@@ -322,33 +396,37 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
                     {/* Date & Time */}
                     <div className="flex items-center space-x-2">
                       <div 
-                        className="w-6 h-6 bg-blue-100 rounded-md flex items-center justify-center"
+                        className="w-6 h-6 rounded-md flex items-center justify-center"
+                        style={{ background: 'var(--bg-tertiary)' }}
                         title="Event date and time"
                       >
-                        <svg className="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                        <svg className="w-3 h-3 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
                         {event.IsAllDay ? (
-                          <p 
-                            className="text-slate-900 font-medium"
-                            title={`All-day event on ${startFormat.date}`}
-                          >
-                            {startFormat.date}
-                          </p>
-                        ) : (
-                          <div>
-                            <p 
-                              className="text-slate-900 font-medium"
-                              title={`Event date: ${startFormat.date}`}
+                                                      <p 
+                              className="font-medium"
+                              style={{ color: 'var(--text-primary)' }}
+                              title={`All-day event on ${startFormat.date}`}
                             >
                               {startFormat.date}
                             </p>
-                            <p 
-                              className="text-slate-600 text-xs"
-                              title={`Event time: ${startFormat.time} to ${isSameDay ? endFormat.time : `${endFormat.date} ${endFormat.time}`}`}
-                            >
+                          ) : (
+                            <div>
+                              <p 
+                                className="font-medium"
+                                style={{ color: 'var(--text-primary)' }}
+                                title={`Event date: ${startFormat.date}`}
+                              >
+                                {startFormat.date}
+                              </p>
+                              <p 
+                                className="text-xs"
+                                style={{ color: 'var(--text-secondary)' }}
+                                title={`Event time: ${startFormat.time} to ${isSameDay ? endFormat.time : `${endFormat.date} ${endFormat.time}`}`}
+                              >
                               {startFormat.time} → {isSameDay ? endFormat.time : `${endFormat.date} ${endFormat.time}`}
                             </p>
                           </div>
@@ -359,22 +437,29 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
                     {/* Location */}
                     <div className="flex items-center space-x-2">
                       <div 
-                        className="w-6 h-6 bg-emerald-100 rounded-md flex items-center justify-center"
+                        className="w-6 h-6 rounded-md flex items-center justify-center"
+                        style={{ background: 'var(--bg-tertiary)' }}
                         title="Event location"
                       >
-                        <svg className="w-3 h-3 text-emerald-600" fill="currentColor" viewBox="0 0 20 20">
+                        <svg className="w-3 h-3 text-red-500" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
                         <p 
-                          className="text-slate-900 font-medium truncate"
+                          className="font-medium truncate"
+                          style={{ color: 'var(--text-primary)' }}
                           title={!event.Location || event.Location === 'No location' || event.Location.trim() === '' 
                             ? "No location specified for this event" 
                             : `Event location: ${event.Location}`}
                         >
                           {!event.Location || event.Location === 'No location' || event.Location.trim() === '' ? (
-                            <span className="text-slate-500 italic">no location</span>
+                            <span 
+                              className="italic"
+                              style={{ color: 'var(--text-tertiary)' }}
+                            >
+                              no location
+                            </span>
                           ) : (
                             event.Location
                           )}
@@ -385,22 +470,29 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
                     {/* Organizer */}
                     <div className="flex items-center space-x-2 md:col-span-2">
                       <div 
-                        className="w-6 h-6 bg-purple-100 rounded-md flex items-center justify-center"
+                        className="w-6 h-6 rounded-md flex items-center justify-center"
+                        style={{ background: 'var(--bg-tertiary)' }}
                         title="Event organizer"
                       >
-                        <svg className="w-3 h-3 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+                        <svg className="w-3 h-3 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
                         <p 
-                          className="text-slate-900 font-medium truncate"
+                          className="font-medium truncate"
+                          style={{ color: 'var(--text-primary)' }}
                           title={event.Organizer === 'Unknown' 
                             ? "Event organizer information is not available" 
                             : `Event organized by: ${event.Organizer}`}
                         >
                           {event.Organizer === 'Unknown' ? (
-                            <span className="text-slate-500 italic">👤 Organizer not specified</span>
+                            <span 
+                              className="italic"
+                              style={{ color: 'var(--text-tertiary)' }}
+                            >
+                              👤 Organizer not specified
+                            </span>
                           ) : (
                             event.Organizer
                           )}
