@@ -3,12 +3,12 @@ import { loginRequest } from "./config/authConfig";
 import { useState, useRef, useEffect } from "react";
 import type { ChatMessage } from "./types/chat";
 import { useUserProfile } from "./hooks/useUserProfile";
-import { apiService } from "./services/apiService";
+import { apiService, ApiConnectionError } from "./services/apiService";
 import MessageRenderer from "./components/MessageRenderer";
 
 function App() {
   const { instance } = useMsal();
-  const { userProfile, loading: profileLoading } = useUserProfile();
+  const { userProfile, loading: profileLoading, error: profileError, isApiConnectionError } = useUserProfile();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -137,10 +137,19 @@ function App() {
     } catch (error) {
       console.error("Failed to send message:", error);
       
+      // Determine error message based on error type
+      let errorContent = "Sorry, I'm having trouble responding right now. Please try again later.";
+      
+      if (error instanceof ApiConnectionError) {
+        errorContent = `🔌 **Connection Error**\n\n${error.message}\n\nPlease start the backend API server and try again.`;
+      } else if (error instanceof Error) {
+        errorContent = `❌ **Error**\n\n${error.message}`;
+      }
+      
       // Add error message
       const errorMessage: ChatMessage = {
         id: Date.now().toString() + "_error",
-        content: "Sorry, I'm having trouble responding right now. Please try again later.",
+        content: errorContent,
         userId: "ai-assistant",
         userName: "AI Assistant",
         timestamp: new Date().toISOString(),
@@ -289,16 +298,57 @@ function App() {
 
       <main className="flex-1 flex flex-col items-center py-4 px-4 overflow-hidden">
         <AuthenticatedTemplate>
+          {/* API Connection Error Banner */}
+          {isApiConnectionError && profileError && (
+            <div 
+              className="w-full max-w-5xl mb-4 p-4 rounded-lg border-l-4"
+              style={{
+                background: 'var(--bg-secondary)',
+                borderLeftColor: '#ef4444',
+                border: '1px solid var(--border-primary)'
+              }}
+            >
+              <div className="flex items-start space-x-3">
+                <div className="flex-shrink-0">
+                  <svg className="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 
+                    className="text-sm font-semibold text-red-800"
+                    style={{ color: '#dc2626' }}
+                  >
+                    Backend API Connection Failed
+                  </h3>
+                  <p 
+                    className="text-sm mt-1"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    {profileError}
+                  </p>
+                  <div className="mt-2">
+                    <p 
+                      className="text-xs"
+                      style={{ color: 'var(--text-tertiary)' }}
+                    >
+                      💡 <strong>To fix this:</strong> Start the backend API server by running the .NET project on http://localhost:5040
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <div 
             className="w-full max-w-5xl flex flex-col backdrop-blur-sm shadow-2xl rounded-3xl overflow-hidden"
             style={{ 
               background: 'var(--card-bg)',
               border: '1px solid var(--border-primary)',
-              height: 'calc(100vh - 8rem)' // More space: viewport minus nav and smaller padding
+              height: 'calc(100vh - 6rem)' // Optimized: viewport minus nav (4rem) and padding (2rem)
             }}
           >
             <div 
-              className="px-4 py-3 flex-shrink-0"
+              className="px-4 py-2 flex-shrink-0"
               style={{ 
                 background: 'var(--bg-secondary)',
                 borderBottom: '1px solid var(--border-primary)'
@@ -317,29 +367,29 @@ function App() {
                 Powered by Semantic Kernel
               </p>
             </div>
-            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            <div className={`flex-1 px-4 py-1 ${messages.length === 0 ? 'overflow-hidden' : 'overflow-y-auto space-y-3'}`}>
               {messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
                     <div 
-                      className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3"
+                      className="w-6 h-6 rounded-full flex items-center justify-center mx-auto mb-1"
                       style={{ background: 'var(--accent-primary)' }}
                     >
-                      <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zM9 9h2v2H9V9z" />
                       </svg>
                     </div>
                     <p 
-                      className="text-base"
+                      className="text-sm font-medium"
                       style={{ color: 'var(--text-primary)' }}
                     >
-                      Welcome{userProfile ? `, ${userProfile.givenName || userProfile.displayName}` : ''}! Start a conversation with your AI assistant.
+                      Welcome{userProfile ? `, ${userProfile.givenName || userProfile.displayName}` : ''}!
                     </p>
                     <p 
-                      className="text-xs mt-2"
+                      className="text-xs"
                       style={{ color: 'var(--text-secondary)' }}
                     >
-                      Type your message below to get started.
+                      Start chatting with your AI assistant
                     </p>
                   </div>
                 </div>
@@ -447,7 +497,7 @@ function App() {
               <div ref={chatEndRef} />
             </div>
             <div 
-              className="px-4 py-3 flex-shrink-0"
+              className="px-4 py-2 flex-shrink-0"
               style={{ 
                 background: 'var(--bg-secondary)',
                 borderTop: '1px solid var(--border-primary)'

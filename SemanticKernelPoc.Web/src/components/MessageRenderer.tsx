@@ -1,6 +1,7 @@
 import React from 'react';
 import CalendarCard from './CalendarCard';
 import NoteCard from './NoteCard';
+import CapabilitiesCard from './CapabilitiesCard';
 
 interface MessageRendererProps {
   content: string;
@@ -8,6 +9,21 @@ interface MessageRendererProps {
 }
 
 const MessageRenderer: React.FC<MessageRendererProps> = ({ content, isAiResponse = false }) => {
+  // Check if content contains capabilities information and it's an AI response
+  if (isAiResponse && (
+    content.includes('I can assist you with a variety of tasks') ||
+    content.includes('Calendar Management') ||
+    content.includes('Note-Taking') ||
+    content.includes('Email Management') ||
+    content.includes('SharePoint and OneDrive')
+  )) {
+    return (
+      <div className="space-y-4">
+        <CapabilitiesCard data={{ capabilities: content }} />
+      </div>
+    );
+  }
+
   // Check if content contains calendar card data and it's an AI response
   if (content.startsWith('CALENDAR_CARDS:') && isAiResponse) {
     try {
