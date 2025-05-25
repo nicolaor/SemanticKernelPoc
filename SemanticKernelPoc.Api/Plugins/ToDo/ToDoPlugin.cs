@@ -178,7 +178,7 @@ public class ToDoPlugin : BaseGraphPlugin
                 created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
                 createdDateTime = t.Task.CreatedDateTime,
                 isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
-                webLink = $"https://to-do.office.com/tasks/id/{t.Task.Id}/details",
+                webLink = $"https://to-do.office.com/tasks/{t.Task.Id}/details",
                 priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
                 {
                     "high" => "#ef4444",

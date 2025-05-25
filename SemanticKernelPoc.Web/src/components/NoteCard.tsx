@@ -109,18 +109,30 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
   return (
     <div className="w-full max-w-2xl mx-auto">
       {/* Header */}
-      <div className="mb-3 p-3 bg-gradient-to-r from-slate-50 to-emerald-50 rounded-lg border border-slate-200/50">
+      <div 
+        className="mb-3 p-3 bg-gradient-to-r from-slate-50 to-emerald-50 rounded-lg border border-slate-200/50"
+        title={`Notes overview showing ${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`}
+      >
         <div className="flex items-center space-x-2">
-          <div className="w-8 h-8 bg-gradient-to-r from-emerald-500 to-green-600 rounded-lg flex items-center justify-center shadow-sm">
+          <div 
+            className="w-8 h-8 bg-gradient-to-r from-emerald-500 to-green-600 rounded-lg flex items-center justify-center shadow-sm"
+            title="Notes icon"
+          >
             <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
             </svg>
           </div>
           <div>
-            <h3 className="text-lg font-bold text-slate-800">
+            <h3 
+              className="text-lg font-bold text-slate-800"
+              title={`${notes.length} ${notes.length === 1 ? 'note' : 'notes'} found`}
+            >
               {notes.length === 1 ? 'Note' : `${notes.length} Notes`}
             </h3>
-            <p className="text-sm text-slate-600">
+            <p 
+              className="text-sm text-slate-600"
+              title="Your recent notes and tasks from Microsoft To Do"
+            >
               Your recent notes and tasks
             </p>
           </div>
@@ -144,18 +156,25 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                   style={{
                     background: `linear-gradient(to right, ${noteColor.from}, ${noteColor.to})`
                   }}
+                  title="Note color indicator - helps distinguish between different notes"
                 ></div>
                 
                 <div className="p-4">
                   {/* Note Header */}
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1 min-w-0">
-                      <h4 className="text-base font-semibold text-slate-900 mb-1 group-hover:text-slate-700 transition-colors">
+                      <h4 
+                        className="text-base font-semibold text-slate-900 mb-1 group-hover:text-slate-700 transition-colors"
+                        title={`Note: ${note.title}`}
+                      >
                         {note.title}
                       </h4>
                       
                       {note.content && note.content !== note.title && (
-                        <p className="text-sm text-slate-600 mb-2 line-clamp-2">
+                        <p 
+                          className="text-sm text-slate-600 mb-2 line-clamp-2"
+                          title={`Note content: ${note.content}`}
+                        >
                           {note.content}
                         </p>
                       )}
@@ -165,6 +184,7 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                         <span 
                           className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium"
                           style={{ backgroundColor: `${note.statusColor}20`, color: note.statusColor }}
+                          title={`Task status: ${formatStatus(note.status)}${note.isCompleted ? ' (Completed)' : ''}`}
                         >
                           {getStatusIcon(note.status, note.isCompleted)}
                           <span className="ml-1">{formatStatus(note.status)}</span>
@@ -174,6 +194,7 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                         <span 
                           className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium"
                           style={{ backgroundColor: `${note.priorityColor}20`, color: note.priorityColor }}
+                          title={`Task priority: ${note.priority}`}
                         >
                           {getPriorityIcon(note.priority)}
                           <span className="ml-1">{note.priority}</span>
@@ -181,7 +202,10 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
 
                         {/* Match Reason for Search Results */}
                         {note.matchReason && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-yellow-100 text-yellow-700">
+                          <span 
+                            className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-yellow-100 text-yellow-700"
+                            title={`Search match found in: ${note.matchReason}`}
+                          >
                             Match: {note.matchReason}
                           </span>
                         )}
@@ -213,38 +237,62 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                     {/* Due Date */}
                     {note.dueDateFormatted && (
                       <div className="flex items-center space-x-2">
-                        <div className="w-6 h-6 bg-red-100 rounded-md flex items-center justify-center">
+                        <div 
+                          className="w-6 h-6 bg-red-100 rounded-md flex items-center justify-center"
+                          title="Task due date"
+                        >
                           <svg className="w-3 h-3 text-red-600" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
                           </svg>
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-slate-900 font-medium">Due: {note.dueDateFormatted}</p>
+                          <p 
+                            className="text-slate-900 font-medium"
+                            title={`Task due date: ${note.dueDateFormatted}`}
+                          >
+                            Due: {note.dueDateFormatted}
+                          </p>
                         </div>
                       </div>
                     )}
 
                     {/* List/Category */}
                     <div className="flex items-center space-x-2">
-                      <div className="w-6 h-6 bg-blue-100 rounded-md flex items-center justify-center">
+                      <div 
+                        className="w-6 h-6 bg-blue-100 rounded-md flex items-center justify-center"
+                        title="Task list/category"
+                      >
                         <svg className="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-slate-900 font-medium truncate">{note.list}</p>
+                        <p 
+                          className="text-slate-900 font-medium truncate"
+                          title={`Task list: ${note.list}`}
+                        >
+                          {note.list}
+                        </p>
                       </div>
                     </div>
 
                     {/* Created Date */}
                     <div className="flex items-center space-x-2 md:col-span-2">
-                      <div className="w-6 h-6 bg-gray-100 rounded-md flex items-center justify-center">
+                      <div 
+                        className="w-6 h-6 bg-gray-100 rounded-md flex items-center justify-center"
+                        title="Task creation date"
+                      >
                         <svg className="w-3 h-3 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-slate-900 font-medium">Created: {note.created}</p>
+                        <p 
+                          className="text-slate-900 font-medium"
+                          title={`Task created on: ${note.created}`}
+                        >
+                          Created: {note.created}
+                        </p>
                       </div>
                     </div>
                   </div>

@@ -14,6 +14,26 @@ public class CalendarPlugin : BaseGraphPlugin
     {
     }
 
+    private static CalendarEventResponse CreateCalendarEventResponse(Event evt)
+    {
+        return new CalendarEventResponse(
+            evt.Subject ?? "No Subject",
+            evt.Start?.DateTime,
+            evt.End?.DateTime,
+            evt.Location?.DisplayName ?? "No location",
+            evt.Organizer?.EmailAddress?.Name ?? "Unknown",
+            evt.IsAllDay ?? false,
+            evt.Id,
+            evt.Attendees?.Any() == true ? evt.Attendees.Count() : null,
+            CalendarResponseFormats.GenerateOutlookWebLink(evt.Id ?? ""),
+            evt.Attendees?.Select(a => new AttendeeInfo(
+                a.EmailAddress?.Name ?? a.EmailAddress?.Address ?? "Unknown",
+                a.EmailAddress?.Address ?? "",
+                a.Status?.Response?.ToString() ?? "None"
+            )).ToList()
+        );
+    }
+
     [KernelFunction, Description("Get the user's upcoming calendar events")]
     public async Task<string> GetUpcomingEvents(Kernel kernel, 
         [Description("Number of days to look ahead (default 7)")] int days = 7,
@@ -36,17 +56,7 @@ public class CalendarPlugin : BaseGraphPlugin
 
                 if (events?.Value?.Any() == true)
                 {
-                    var eventList = events.Value.Select(evt => new CalendarEventResponse(
-                        evt.Subject ?? "No Subject",
-                        evt.Start?.DateTime,
-                        evt.End?.DateTime,
-                        evt.Location?.DisplayName ?? "No location",
-                        evt.Organizer?.EmailAddress?.Name ?? "Unknown",
-                        evt.IsAllDay ?? false,
-                        evt.Id,
-                        evt.Attendees?.Count(),
-                        CalendarResponseFormats.GenerateOutlookWebLink(evt.Id ?? "")
-                    ));
+                    var eventList = events.Value.Select(CreateCalendarEventResponse);
 
                     var calendarData = new CalendarCardsData(
                         "calendar_events",
@@ -279,17 +289,7 @@ public class CalendarPlugin : BaseGraphPlugin
 
                 if (events?.Value?.Any() == true)
                 {
-                    var eventList = events.Value.Select(evt => new CalendarEventResponse(
-                        evt.Subject ?? "No Subject",
-                        evt.Start?.DateTime,
-                        evt.End?.DateTime,
-                        evt.Location?.DisplayName ?? "No location",
-                        evt.Organizer?.EmailAddress?.Name ?? "Unknown",
-                        evt.IsAllDay ?? false,
-                        evt.Id,
-                        null,
-                        CalendarResponseFormats.GenerateOutlookWebLink(evt.Id ?? "")
-                    ));
+                    var eventList = events.Value.Select(CreateCalendarEventResponse);
 
                     var calendarData = new CalendarCardsData(
                         "calendar_events",
@@ -314,17 +314,7 @@ public class CalendarPlugin : BaseGraphPlugin
 
                 if (upcomingEvents?.Value?.Any() == true)
                 {
-                    var upcomingEventList = upcomingEvents.Value.Select(evt => new CalendarEventResponse(
-                        evt.Subject ?? "No Subject",
-                        evt.Start?.DateTime,
-                        evt.End?.DateTime,
-                        evt.Location?.DisplayName ?? "No location",
-                        evt.Organizer?.EmailAddress?.Name ?? "Unknown",
-                        evt.IsAllDay ?? false,
-                        evt.Id,
-                        null,
-                        CalendarResponseFormats.GenerateOutlookWebLink(evt.Id ?? "")
-                    ));
+                    var upcomingEventList = upcomingEvents.Value.Select(CreateCalendarEventResponse);
 
                     var upcomingResponse = new CalendarCardsData(
                         "calendar_events",
@@ -474,17 +464,7 @@ public class CalendarPlugin : BaseGraphPlugin
 
                 if (events?.Value?.Any() == true)
                 {
-                    var eventList = events.Value.Select(evt => new CalendarEventResponse(
-                        evt.Subject ?? "No Subject",
-                        evt.Start?.DateTime,
-                        evt.End?.DateTime,
-                        evt.Location?.DisplayName ?? "No location",
-                        evt.Organizer?.EmailAddress?.Name ?? "Unknown",
-                        evt.IsAllDay ?? false,
-                        evt.Id,
-                        evt.Attendees?.Count(),
-                        CalendarResponseFormats.GenerateOutlookWebLink(evt.Id ?? "")
-                    ));
+                    var eventList = events.Value.Select(CreateCalendarEventResponse);
 
                     var calendarData = new CalendarCardsData(
                         "calendar_events",
@@ -560,17 +540,7 @@ public class CalendarPlugin : BaseGraphPlugin
                 if (events?.Value?.Any() == true)
                 {
                     var nextEvent = events.Value.First();
-                    var eventList = new[] { new CalendarEventResponse(
-                        nextEvent.Subject ?? "No Subject",
-                        nextEvent.Start?.DateTime,
-                        nextEvent.End?.DateTime,
-                        nextEvent.Location?.DisplayName ?? "No location",
-                        nextEvent.Organizer?.EmailAddress?.Name ?? "Unknown",
-                        nextEvent.IsAllDay ?? false,
-                        nextEvent.Id,
-                        nextEvent.Attendees?.Count(),
-                        CalendarResponseFormats.GenerateOutlookWebLink(nextEvent.Id ?? "")
-                    )};
+                    var eventList = new[] { CreateCalendarEventResponse(nextEvent) };
 
                     var calendarData = new CalendarCardsData(
                         "calendar_events",
@@ -611,17 +581,7 @@ public class CalendarPlugin : BaseGraphPlugin
 
                 if (includeDetails && events?.Value?.Any() == true)
                 {
-                    var eventList = events.Value.Select(evt => new CalendarEventResponse(
-                        evt.Subject ?? "No Subject",
-                        evt.Start?.DateTime,
-                        evt.End?.DateTime,
-                        evt.Location?.DisplayName ?? "No location",
-                        evt.Organizer?.EmailAddress?.Name ?? "Unknown",
-                        evt.IsAllDay ?? false,
-                        evt.Id,
-                        null,
-                        CalendarResponseFormats.GenerateOutlookWebLink(evt.Id ?? "")
-                    ));
+                    var eventList = events.Value.Select(CreateCalendarEventResponse);
 
                     var detailedResponse = new CalendarCardsData(
                         "calendar_events",
