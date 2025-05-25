@@ -95,14 +95,15 @@ public class ChatController : ControllerBase
                 
                 "🚨 CRITICAL FUNCTION CALLING RULES:\n" +
                 "1. When user asks for 'today' or 'today's events' → call GetTodaysEvents()\n" +
-                "2. When user asks for 'this month' → call GetEventCount(timePeriod='this_month', includeDetails=true)\n" +
-                "3. When user asks for 'upcoming this month' or 'upcoming events this month' → call GetEventCount(timePeriod='this_month_upcoming', includeDetails=true)\n" +
-                "4. When user asks for 'this week' → call GetEventCount(timePeriod='this_week', includeDetails=true)\n" +
-                "5. When user asks for 'upcoming this week' or 'upcoming events this week' → call GetEventCount(timePeriod='this_week_upcoming', includeDetails=true)\n" +
-                "6. When user asks for 'upcoming' or 'appointments' (general) → call GetUpcomingEvents()\n" +
-                "7. When user asks for 'notes', 'my notes', 'show notes' → call GetRecentNotes()\n" +
-                "8. When functions return 'CALENDAR_CARDS:' or 'NOTE_CARDS:' → return ONLY that exact response, no additional text\n" +
-                "9. NEVER provide manual responses for calendar or note data - ALWAYS use functions first\n" +
+                "2. When user asks for 'next appointment', 'next event', 'my next appointment', 'when is my next appointment' → call GetNextAppointment()\n" +
+                "3. When user asks for 'this month' → call GetEventCount(timePeriod='this_month', includeDetails=true)\n" +
+                "4. When user asks for 'upcoming this month' or 'upcoming events this month' → call GetEventCount(timePeriod='this_month_upcoming', includeDetails=true)\n" +
+                "5. When user asks for 'this week' → call GetEventCount(timePeriod='this_week', includeDetails=true)\n" +
+                "6. When user asks for 'upcoming this week' or 'upcoming events this week' → call GetEventCount(timePeriod='this_week_upcoming', includeDetails=true)\n" +
+                "7. When user asks for 'upcoming' or 'appointments' (general) → call GetUpcomingEvents()\n" +
+                "8. When user asks for 'notes', 'my notes', 'show notes' → call GetRecentNotes()\n" +
+                "9. When functions return 'CALENDAR_CARDS:' or 'NOTE_CARDS:' → return ONLY that exact response, no additional text\n" +
+                "10. NEVER provide manual responses for calendar or note data - ALWAYS use functions first\n" +
                 
                 "🎯 CONVERSATIONAL APPROACH:\n" +
                 "• ALWAYS use a step-by-step conversational approach when information is missing\n" +
@@ -179,74 +180,13 @@ public class ChatController : ControllerBase
 
             _logger.LogInformation("Raw AI response content: {Content}", response.Content);
 
-            // Check if response contains cards data and extract it
+            // Use the response content as-is - the plugins already return properly formatted card data
             string finalContent = response.Content ?? "I'm sorry, I couldn't generate a response.";
             
-            // Extract CALENDAR_CARDS or NOTE_CARDS
-            var cardTypes = new[] { "CALENDAR_CARDS:", "NOTE_CARDS:" };
-            foreach (var cardType in cardTypes)
+            // Log if we detect card data (for debugging)
+            if (finalContent.Contains("CALENDAR_CARDS:") || finalContent.Contains("NOTE_CARDS:"))
             {
-                if (finalContent.Contains(cardType))
-                {
-                    _logger.LogInformation("Found {CardType} in response, extracting...", cardType);
-                    
-                    // Find the start of the cards
-                    var startIndex = finalContent.IndexOf(cardType);
-                    if (startIndex >= 0)
-                    {
-                        // Extract everything from cards marker to the end, or until we find text that's clearly not JSON
-                        var cardsPart = finalContent.Substring(startIndex);
-                        
-                        // Try to find where the JSON ends by looking for common JSON ending patterns
-                        var jsonEndMarkers = new[] { "}\n\n", "}\r\n\r\n", "}." };
-                        var endIndex = -1;
-                        
-                        foreach (var marker in jsonEndMarkers)
-                        {
-                            var foundIndex = cardsPart.IndexOf(marker);
-                            if (foundIndex > 0)
-                            {
-                                endIndex = foundIndex + 1; // Include the closing brace
-                                break;
-                            }
-                        }
-                        
-                        if (endIndex > 0)
-                        {
-                            finalContent = cardsPart.Substring(0, endIndex);
-                        }
-                        else
-                        {
-                            // No clear end marker, try to extract until end or until non-JSON content
-                            var lines = cardsPart.Split('\n');
-                            var jsonLines = new List<string>();
-                            
-                            foreach (var line in lines)
-                            {
-                                jsonLines.Add(line);
-                                // Stop if we hit a line that looks like plain text (not JSON)
-                                if (line.Trim().Length > 0 && 
-                                    !line.TrimStart().StartsWith("{") && 
-                                    !line.TrimStart().StartsWith("}") && 
-                                    !line.TrimStart().StartsWith("\"") && 
-                                    !line.Contains("CALENDAR_CARDS:") &&
-                                    !line.Contains("NOTE_CARDS:") &&
-                                    !line.Trim().EndsWith(",") &&
-                                    !line.Trim().EndsWith("{") &&
-                                    !line.Trim().EndsWith("}"))
-                                {
-                                    jsonLines.RemoveAt(jsonLines.Count - 1); // Remove the non-JSON line
-                                    break;
-                                }
-                            }
-                            
-                            finalContent = string.Join("\n", jsonLines);
-                        }
-                        
-                        _logger.LogInformation("Extracted {CardType}: {ExtractedContent}", cardType, finalContent);
-                        break; // Exit the loop once we find and process cards
-                    }
-                }
+                _logger.LogInformation("Response contains card data, passing through as-is");
             }
 
             // Create AI response message

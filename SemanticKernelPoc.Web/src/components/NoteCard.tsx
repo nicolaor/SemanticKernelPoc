@@ -96,12 +96,12 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
 
   const getNoteColor = (index: number) => {
     const colors = [
-      'from-emerald-500 to-emerald-600',
-      'from-blue-500 to-blue-600',
-      'from-purple-500 to-purple-600',
-      'from-orange-500 to-orange-600',
-      'from-pink-500 to-pink-600',
-      'from-indigo-500 to-indigo-600',
+      { from: '#10b981', to: '#059669' }, // emerald
+      { from: '#3b82f6', to: '#2563eb' }, // blue
+      { from: '#8b5cf6', to: '#7c3aed' }, // purple
+      { from: '#f97316', to: '#ea580c' }, // orange
+      { from: '#ec4899', to: '#db2777' }, // pink
+      { from: '#6366f1', to: '#4f46e5' }, // indigo
     ];
     return colors[index % colors.length];
   };
@@ -139,7 +139,12 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
                 className="group bg-white border border-slate-200/60 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
               >
                 {/* Note Color Bar */}
-                <div className={`h-1 bg-gradient-to-r ${noteColor}`}></div>
+                <div 
+                  className="h-1"
+                  style={{
+                    background: `linear-gradient(to right, ${noteColor.from}, ${noteColor.to})`
+                  }}
+                ></div>
                 
                 <div className="p-4">
                   {/* Note Header */}

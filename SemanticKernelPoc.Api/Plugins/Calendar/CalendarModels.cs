@@ -9,7 +9,7 @@ public record CalendarEventResponse(
     bool IsAllDay,
     string Id,
     int? AttendeeCount = null,
-    string? WebLink = null
+    string WebLink = null
 );
 
 public record CalendarCardsData(
@@ -29,8 +29,10 @@ public static class CalendarResponseFormats
 
     public static string GenerateOutlookWebLink(string eventId)
     {
-        // Generate Outlook Web App link for the event
-        return $"https://outlook.office.com/calendar/item/{eventId}";
+        // Generate Outlook Web App link for the event using the correct format
+        // URL-encode the event ID to handle special characters
+        var encodedEventId = System.Web.HttpUtility.UrlEncode(eventId);
+        return $"https://outlook.office365.com/owa/?itemid={encodedEventId}&exvsurl=1&path=/calendar/item";
     }
 
     public static string GenerateToDoWebLink(string taskId, string listId)

@@ -539,6 +539,56 @@ public class CalendarPlugin : BaseGraphPlugin
         );
     }
 
+    [KernelFunction, Description("Get the next upcoming appointment/event regardless of when it occurs")]
+    public async Task<string> GetNextAppointment(Kernel kernel)
+    {
+        return await ExecuteGraphOperationAsync(
+            kernel,
+            async (graphClient, userName) =>
+            {
+                var startTime = DateTime.Now;
+                var endTime = startTime.AddYears(1); // Look ahead up to 1 year
+
+                var events = await graphClient.Me.Calendar.CalendarView.GetAsync(requestConfig =>
+                {
+                    requestConfig.QueryParameters.StartDateTime = startTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
+                    requestConfig.QueryParameters.EndDateTime = endTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
+                    requestConfig.QueryParameters.Top = 1; // Only get the very next event
+                    requestConfig.QueryParameters.Orderby = new[] { "start/dateTime" };
+                });
+
+                if (events?.Value?.Any() == true)
+                {
+                    var nextEvent = events.Value.First();
+                    var eventList = new[] { new CalendarEventResponse(
+                        nextEvent.Subject ?? "No Subject",
+                        nextEvent.Start?.DateTime,
+                        nextEvent.End?.DateTime,
+                        nextEvent.Location?.DisplayName ?? "No location",
+                        nextEvent.Organizer?.EmailAddress?.Name ?? "Unknown",
+                        nextEvent.IsAllDay ?? false,
+                        nextEvent.Id,
+                        nextEvent.Attendees?.Count(),
+                        CalendarResponseFormats.GenerateOutlookWebLink(nextEvent.Id ?? "")
+                    )};
+
+                    var calendarData = new CalendarCardsData(
+                        "calendar_events",
+                        1,
+                        userName,
+                        "next appointment",
+                        eventList
+                    );
+
+                    return CalendarResponseFormats.FormatCalendarCards(calendarData);
+                }
+
+                return $"No upcoming appointments found for {userName}.";
+            },
+            "GetNextAppointment"
+        );
+    }
+
     [KernelFunction, Description("Get count of calendar events in a specific time period")]
     public async Task<string> GetEventCount(Kernel kernel,
         [Description("Time period: 'today', 'tomorrow', 'this_week', 'next_week', 'this_month', or number of days from today (default 7)")] string timePeriod = "7",
