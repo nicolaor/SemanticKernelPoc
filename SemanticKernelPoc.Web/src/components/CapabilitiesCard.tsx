@@ -6,7 +6,7 @@ interface CapabilitiesCardProps {
   };
 }
 
-const CapabilitiesCard: React.FC<CapabilitiesCardProps> = ({ data }) => {
+const CapabilitiesCard: React.FC<CapabilitiesCardProps> = () => {
   return (
     <div className="w-full max-w-2xl mx-auto">
       <div 
@@ -156,6 +156,32 @@ const CapabilitiesCard: React.FC<CapabilitiesCardProps> = ({ data }) => {
                 <li>• View document libraries and files</li>
                 <li>• Manage OneDrive files and folders</li>
                 <li>• Access site details and metadata</li>
+              </ul>
+            </div>
+
+            {/* Meeting Transcripts */}
+            <div className="space-y-3">
+              <div className="flex items-center space-x-2">
+                <div 
+                  className="w-8 h-8 rounded-lg flex items-center justify-center"
+                  style={{ background: '#6366f120' }}
+                >
+                  <svg className="w-4 h-4 text-indigo-600" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
+                  </svg>
+                </div>
+                <h4 
+                  className="font-semibold"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  📹 Meeting Transcripts
+                </h4>
+              </div>
+              <ul className="space-y-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                <li>• Access Teams meeting transcripts</li>
+                <li>• Generate AI-powered summaries</li>
+                <li>• Extract key decisions and action items</li>
+                <li>• Create tasks from meeting content</li>
               </ul>
             </div>
           </div>

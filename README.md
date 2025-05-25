@@ -1,21 +1,47 @@
 # 🤖 Semantic Kernel PoC - Microsoft 365 AI Assistant
 
-A comprehensive proof-of-concept application demonstrating the integration of **Microsoft Semantic Kernel** with **Microsoft Graph API** to create an intelligent AI assistant for Microsoft 365 productivity tasks.
+A comprehensive proof-of-concept application demonstrating the integration of **Microsoft Semantic Kernel** with **Microsoft Graph API** to create an intelligent AI assistant for Microsoft 365 productivity tasks with advanced workflow automation and smart function selection.
 
 ## 📋 Overview
 
-This application provides a conversational AI interface that can interact with your Microsoft 365 data through natural language. The AI assistant can help you manage your calendar, emails, SharePoint files, OneDrive content, and create notes using Microsoft To Do.
+This application provides a conversational AI interface that can interact with your Microsoft 365 data through natural language. The AI assistant can help you manage your calendar, emails, SharePoint files, OneDrive content, create notes, access meeting transcripts, and execute complex cross-plugin workflows automatically.
 
 ### 🌟 Key Features
 
-- **🗓️ Calendar Management**: View, create, update, and delete calendar events
-- **📧 Email Operations**: Read, send, search emails and manage drafts
-- **📁 SharePoint Integration**: Browse sites, search files, and access documents
-- **💾 OneDrive Access**: View drive information and manage files
-- **📝 Note Taking**: Create and manage notes using Microsoft To Do
-- **💬 Conversation Memory**: Maintains context across chat sessions
-- **🎨 Modern UI**: Clean, responsive React TypeScript frontend
-- **🔒 Secure Authentication**: Azure AD integration with proper scoping
+- **🗓️ Calendar Management**: View, create, update, and delete calendar events with rich card displays
+- **📧 Email Operations**: Read, send, search emails and manage drafts with full metadata
+- **📁 SharePoint Integration**: Browse sites, search files, and access documents across your organization
+- **💾 OneDrive Access**: View drive information and manage files with comprehensive metadata
+- **📝 Task & Note Management**: Create and manage tasks/notes using Microsoft To Do with card-based UI
+- **🎙️ Meeting Transcript Analysis**: Access Teams meeting transcripts, generate summaries, extract decisions, and create action items
+- **🔄 Cross-Plugin Workflows**: Automated business processes that chain multiple plugins together
+- **🧠 Smart Function Selection**: Intelligent function selection based on context and conversation history
+- **💬 Conversation Memory**: Maintains context across chat sessions with intelligent topic tracking
+- **🎨 Modern UI**: Clean, responsive React TypeScript frontend with beautiful card-based displays
+- **🔒 Secure Authentication**: Azure AD integration with comprehensive permission scoping
+
+### 🚀 Advanced Capabilities
+
+#### **Cross-Plugin Workflows**
+Automated business processes that intelligently combine multiple Microsoft 365 services:
+
+1. **Meeting to Tasks**: Extract action items from meeting transcripts and create To Do tasks
+2. **Email to Calendar**: Create calendar events from email content automatically
+3. **Project Planning**: Create project notes and schedule planning meetings
+4. **Meeting Follow-up**: Generate meeting summaries and send follow-up emails
+5. **Weekly Review**: Compile comprehensive weekly activity summaries
+
+#### **Smart Function Selection**
+- **Context-Aware**: Selects relevant functions based on conversation context
+- **Performance Optimized**: Limits to top 8 functions to manage token usage
+- **Keyword Matching**: Advanced keyword mapping for precise function selection
+- **Workflow Integration**: Boosts function relevance based on active workflows
+
+#### **Rich Card-Based UI**
+- **Calendar Cards**: Beautiful event displays with attendee information, locations, and quick actions
+- **Task Cards**: Comprehensive task management with priority, due dates, and status tracking
+- **Meeting Transcript Cards**: Rich meeting content with summaries and action items
+- **Email Cards**: Full email metadata with attachments and threading information
 
 ## 🏗️ Architecture
 
@@ -52,6 +78,8 @@ This application provides a conversational AI interface that can interact with y
 - Azure OpenAI or OpenAI GPT models
 - Semantic Kernel for function calling
 - Microsoft Graph for M365 data access
+- Smart Function Selection system
+- Cross-plugin workflow orchestration
 
 ## 🚀 Getting Started
 
@@ -97,14 +125,33 @@ This application provides a conversational AI interface that can interact with y
 
 Add the following **Microsoft Graph** permissions:
 
-**Delegated Permissions:**
-- `User.Read` - Read user profile
+**📅 Calendar Permissions:**
+- `Calendars.Read` - Read user calendars
 - `Calendars.ReadWrite` - Full calendar access
+
+**📧 Email Permissions:**
+- `Mail.Read` - Read user mail
 - `Mail.ReadWrite` - Read and write mail
-- `Mail.Send` - Send mail
+- `Mail.Send` - Send mail as user
+
+**📁 File & SharePoint Permissions:**
 - `Sites.Read.All` - Read SharePoint sites
-- `Files.Read.All` - Read OneDrive files
-- `Tasks.ReadWrite` - Read and write tasks (for notes)
+- `Files.Read.All` - Read OneDrive and SharePoint files
+
+**📝 Task & Note Permissions:**
+- `Tasks.Read` - Read user tasks
+- `Tasks.ReadWrite` - Read and write tasks (for notes/todos)
+
+**🎙️ Meeting & Teams Permissions:**
+- `OnlineMeetings.Read` - Read online meeting details
+- `OnlineMeetingTranscript.Read.All` - Read meeting transcripts
+
+**👤 User & Profile Permissions:**
+- `User.Read` - Read user profile
+- `User.ReadBasic.All` - Read basic user profiles
+
+**🔍 Directory Permissions:**
+- `Directory.Read.All` - Read directory data (for user lookups)
 
 **Steps:**
 1. Go to **API permissions** → **Add a permission**
@@ -112,6 +159,9 @@ Add the following **Microsoft Graph** permissions:
 3. Add each permission listed above
 4. **Important**: Click **Grant admin consent for [Your Organization]** (requires admin privileges)
 5. Verify all permissions show "Granted for [Your Organization]" with green checkmarks
+
+**⚠️ Note on CallRecords.Read.All:**
+This permission is **NOT** available as a delegated permission and requires application permissions with special approval from Microsoft. The application works without this permission, but some advanced meeting analytics features may be limited.
 
 #### 4. Configure Authentication
 
@@ -144,12 +194,6 @@ Add the following **Microsoft Graph** permissions:
 2. Select **Access** token type
 3. Add the same claims as above
 4. This ensures the API receives user information in the access token
-
-**Important Notes:**
-- The `name` claim provides the user's display name (e.g., "John Doe")
-- The `preferred_username` claim usually contains the user's email
-- The `given_name` and `family_name` claims provide first and last names separately
-- These claims are essential for the application to display user information correctly
 
 #### 6. Create Client Secret (for API)
 
@@ -240,24 +284,6 @@ Create `SemanticKernelPoc.Api/appsettings.Development.json`:
 }
 ```
 
-**Configuration Values Explained:**
-- `TenantId`: Your Azure AD tenant ID (from Azure AD → Overview)
-- `ClientId`: Your app registration client ID
-- `ClientSecret`: The secret value you created and copied
-- `Audience`: Should match your Application ID URI (usually `api://YOUR_CLIENT_ID`)
-- `Endpoint`: Your Azure OpenAI resource endpoint
-- `ApiKey`: Your Azure OpenAI API key
-- `DeploymentOrModelId`: The name of your deployed model
-
-**For OpenAI (instead of Azure OpenAI):**
-```json
-"SemanticKernel": {
-  "UseAzureOpenAI": false,
-  "ApiKey": "YOUR_OPENAI_API_KEY",
-  "DeploymentOrModelId": "gpt-4"
-}
-```
-
 #### 2. Frontend Configuration
 
 Create `SemanticKernelPoc.Web/.env.local`:
@@ -294,26 +320,34 @@ The web app will be available at `http://localhost:5173`
 
 1. Open `http://localhost:5173` in your browser
 2. Click **Sign In** and authenticate with your Microsoft account
-3. **Verify Authentication**: Check that your name and email appear in the UI
-   - Look for your display name in the top-right corner or user profile area
-   - If name shows as "User" or is missing, check the claims configuration
-   - Verify that the `name` and `preferred_username` claims are properly configured
-4. **Test API Access**: Try asking questions like:
-   - "What's on my calendar today?"
-   - "Send an email to john@example.com about the meeting"
-   - "Create a note to buy groceries"
-   - "Show me my recent emails"
+3. Try these example queries:
 
-**If authentication fails:**
-- Check browser developer console for errors
-- Verify all Azure AD configuration steps were completed
-- Ensure the user account has Microsoft 365 licenses
-- Try signing out and signing in again
+**📅 Calendar Queries:**
+- "Show me my calendar events for today"
+- "What's my next appointment?"
+- "What do I have this week?"
+- "Schedule a meeting with John tomorrow at 2 PM"
 
-**If API calls fail:**
-- Check the API logs for detailed error messages
-- Verify Microsoft Graph permissions are granted
-- Ensure the user has access to the requested resources (calendar, mail, etc.)
+**📝 Task & Note Queries:**
+- "Show me my tasks"
+- "What tasks are assigned to me?"
+- "Create a note to buy groceries"
+- "Show me my recent notes"
+
+**📧 Email Queries:**
+- "Show me my recent emails"
+- "Send an email to john@example.com about the meeting"
+- "Find emails from Sarah"
+
+**🎙️ Meeting Transcript Queries:**
+- "Show me recent meeting transcripts"
+- "Summarize my last meeting"
+- "Extract action items from the meeting"
+
+**🔄 Workflow Triggers:**
+- "Create tasks from my last meeting" (Meeting to Tasks workflow)
+- "Schedule a project planning meeting" (Project Planning workflow)
+- "Send meeting follow-up" (Meeting Follow-up workflow)
 
 ## 🔧 Development
 
@@ -323,24 +357,50 @@ The web app will be available at `http://localhost:5173`
 SemanticKernelPoc/
 ├── SemanticKernelPoc.Api/          # .NET 8 Web API
 │   ├── Controllers/                # API controllers
-│   ├── Models/                     # Data models
+│   ├── Models/                     # Data models and workflow definitions
 │   ├── Plugins/                    # Semantic Kernel plugins
-│   │   ├── Calendar/              # Calendar operations
+│   │   ├── Calendar/              # Calendar operations with card support
 │   │   ├── Mail/                  # Email operations
 │   │   ├── SharePoint/            # SharePoint integration
 │   │   ├── OneDrive/              # OneDrive operations
-│   │   └── ToDo/                  # Note-taking via To Do
+│   │   ├── ToDo/                  # Task/note management with cards
+│   │   └── MeetingPlugin.cs       # Meeting transcript analysis
 │   └── Services/                  # Business services
 │       ├── Graph/                 # Microsoft Graph integration
 │       ├── Helpers/               # Utility classes
-│       └── Memory/                # Conversation memory
+│       ├── Intelligence/          # Smart function selection
+│       ├── Memory/                # Conversation memory
+│       └── Workflows/             # Cross-plugin workflow orchestration
 ├── SemanticKernelPoc.Web/         # React TypeScript frontend
 │   ├── src/
-│   │   ├── components/            # React components
+│   │   ├── components/            # React components including card renderers
 │   │   ├── services/              # API services
 │   │   └── types/                 # TypeScript definitions
 └── README.md
 ```
+
+### Key Features Implementation
+
+#### **Smart Function Selection**
+- **Location**: `Services/Intelligence/SmartFunctionSelector.cs`
+- **Features**: Context-aware function selection, keyword matching, performance optimization
+- **Configuration**: Keyword mappings for all plugins and workflow states
+
+#### **Cross-Plugin Workflows**
+- **Location**: `Services/Workflows/WorkflowOrchestrator.cs`
+- **Features**: Automated workflow detection, step chaining, error handling, retry logic
+- **Workflows**: 5 predefined business workflows with dependency management
+
+#### **Card-Based UI**
+- **Calendar Cards**: `components/CalendarCard.tsx`
+- **Task Cards**: `components/TaskCard.tsx` (via NOTE_CARDS format)
+- **Meeting Cards**: `components/MeetingTranscriptCard.tsx`
+- **Format**: Special response formats (`CALENDAR_CARDS:`, `NOTE_CARDS:`) for rich displays
+
+#### **Meeting Transcript Analysis**
+- **Location**: `Plugins/MeetingPlugin.cs`
+- **Features**: Transcript access, AI-powered summaries, decision extraction, task proposal
+- **Integration**: Seamless integration with To Do for action item creation
 
 ### Adding New Plugins
 
@@ -348,12 +408,16 @@ SemanticKernelPoc/
 2. Add your plugin class inheriting from `BaseGraphPlugin`
 3. Create corresponding models in `{PluginName}Models.cs`
 4. Register the plugin in `ChatController.cs`
+5. Add keyword mappings in `SmartFunctionSelector.cs`
+6. Create card components if needed for rich UI display
 
 ### Key Classes
 
 - **`BaseGraphPlugin`**: Base class for all Microsoft Graph plugins
 - **`IGraphService`**: Service for Microsoft Graph client management
 - **`IConversationMemoryService`**: Interface for conversation persistence
+- **`ISmartFunctionSelector`**: Interface for intelligent function selection
+- **`IWorkflowOrchestrator`**: Interface for cross-plugin workflow management
 - **`CalendarHelpers`**: Utility functions for date/time operations
 
 ## 🚀 Deployment
@@ -393,6 +457,8 @@ AllowedOrigins__0=https://your-frontend-domain.com
 - Validate **user permissions** before Graph API calls
 - Use **least privilege** principle for API permissions
 - Enable **audit logging** for production environments
+- **Workflow security**: Ensure workflows only access user-authorized data
+- **Function selection**: Validate selected functions against user permissions
 
 ## 🐛 Troubleshooting
 
@@ -402,44 +468,29 @@ AllowedOrigins__0=https://your-frontend-domain.com
 - **"AADSTS50011: The reply URL specified in the request does not match"**
   - Verify redirect URIs in Azure AD app registration match exactly
   - Check for trailing slashes, http vs https, port numbers
-  - Ensure both development (`http://localhost:5173`) and production URLs are added
 
 - **"AADSTS65001: The user or administrator has not consented"**
   - Click "Grant admin consent" in API permissions
   - Ensure all permissions show green checkmarks
-  - User may need to sign out and sign in again after consent
-
-- **"AADSTS50105: The signed in user is not assigned to a role"**
-  - Add users to the application in Azure AD → Enterprise Applications
-  - Or disable user assignment requirement in Enterprise Applications → Properties
 
 - **"Invalid audience" or token validation errors**
   - Verify `Audience` in appsettings matches Application ID URI
   - Check `accessTokenAcceptedVersion` is set to `2` in manifest
-  - Ensure API is properly exposed with correct scope
 
-- **Missing user claims (name, email, etc.)**
-  - Configure optional claims in Token configuration
-  - Add claims for both ID tokens and Access tokens
-  - Verify Microsoft Graph permissions are granted
-  - Check that `name`, `preferred_username`, `email`, `given_name`, and `family_name` claims are added
-  - If user name still doesn't appear, check browser developer tools → Network → look for the token and verify claims are present
-  - Try signing out and signing in again after adding claims
+**Permission Issues:**
+- **Meeting transcript access fails**: Ensure `OnlineMeetingTranscript.Read.All` permission is granted
+- **Task creation fails**: Verify `Tasks.ReadWrite` permission is granted
+- **Calendar access denied**: Check `Calendars.ReadWrite` permission
 
-**Authentication Errors:**
-- Verify Azure AD app registration configuration
-- Check redirect URIs match exactly
-- Ensure admin consent is granted for API permissions
+**Workflow Issues:**
+- **Workflows not triggering**: Check keyword mappings in `SmartFunctionSelector.cs`
+- **Workflow steps failing**: Review logs for specific plugin errors
+- **Function selection issues**: Verify function metadata and descriptions
 
-**Graph API Errors:**
-- Verify user has necessary licenses (Microsoft 365)
-- Check API permissions are granted and consented
-- Ensure user is in the correct tenant
-
-**Build Errors:**
-- Ensure .NET 8 SDK is installed
-- Run `dotnet restore` in the API project
-- Run `npm install` in the Web project
+**Card Display Issues:**
+- **Cards not showing**: Ensure functions return proper `CALENDAR_CARDS:` or `NOTE_CARDS:` format
+- **Card formatting broken**: Check JSON serialization in response formatters
+- **Missing card data**: Verify all required properties are included in card models
 
 ### Debug Mode
 
@@ -450,39 +501,36 @@ Enable detailed logging in `appsettings.Development.json`:
   "Logging": {
     "LogLevel": {
       "Default": "Debug",
-      "Microsoft.Graph": "Debug",
+      "Microsoft.AspNetCore": "Information",
+      "Microsoft.Identity": "Debug",
       "SemanticKernelPoc": "Debug"
     }
   }
 }
 ```
 
-## 📚 Additional Resources
+## 📚 Documentation
 
-- [Microsoft Semantic Kernel Documentation](https://learn.microsoft.com/semantic-kernel/)
-- [Microsoft Graph API Documentation](https://docs.microsoft.com/graph/)
-- [Azure AD App Registration Guide](https://docs.microsoft.com/azure/active-directory/develop/quickstart-register-app)
-- [Microsoft 365 Developer Program](https://developer.microsoft.com/microsoft-365/dev-program)
+- **[Cross-Plugin Workflows Guide](CROSS_PLUGIN_WORKFLOWS.md)** - Detailed workflow documentation
+- **[Smart Function Selection](Services/Intelligence/SmartFunctionSelector.cs)** - Function selection algorithm
+- **[Plugin Development Guide](Plugins/README.md)** - Creating new plugins
+- **[Card UI Components](SemanticKernelPoc.Web/src/components/)** - Frontend card components
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙋‍♂️ Support
+## 🙏 Acknowledgments
 
-For questions and support:
-- Create an issue in this repository
-- Check the troubleshooting section above
-- Review Microsoft documentation links
-
----
-
-**Happy coding! 🚀** 
+- Microsoft Semantic Kernel team
+- Microsoft Graph API team
+- Azure OpenAI service
+- React and TypeScript communities 

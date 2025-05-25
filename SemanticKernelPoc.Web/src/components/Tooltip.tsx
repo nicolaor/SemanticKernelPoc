@@ -8,7 +8,7 @@ interface TooltipProps {
 
 const Tooltip: React.FC<TooltipProps> = ({ content, children, delay = 300 }) => {
   const [isVisible, setIsVisible] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<number | null>(null);
 
   const showTooltip = () => {
     timeoutRef.current = setTimeout(() => {

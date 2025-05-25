@@ -5,6 +5,8 @@ using Microsoft.SemanticKernel;
 using SemanticKernelPoc.Api.Models;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
+using SemanticKernelPoc.Api.Services.Intelligence;
+using SemanticKernelPoc.Api.Services.Workflows;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,6 +30,15 @@ builder.Services.AddCors(options =>
 
 // Add Conversation Memory Service
 builder.Services.AddSingleton<IConversationMemoryService, InMemoryConversationService>();
+
+// Add Conversation Context Service
+builder.Services.AddSingleton<IConversationContextService, InMemoryConversationContextService>();
+
+// Add Smart Function Selector
+builder.Services.AddSingleton<ISmartFunctionSelector, SmartFunctionSelector>();
+
+// Add Workflow Orchestrator
+builder.Services.AddSingleton<IWorkflowOrchestrator, WorkflowOrchestrator>();
 
 // Add Graph Service for plugins
 builder.Services.AddSingleton<IGraphService, GraphService>();

@@ -10,8 +10,11 @@ using SemanticKernelPoc.Api.Plugins.SharePoint;
 using SemanticKernelPoc.Api.Plugins.OneDrive;
 using SemanticKernelPoc.Api.Plugins.Mail;
 using SemanticKernelPoc.Api.Plugins.ToDo;
+using SemanticKernelPoc.Api.Plugins;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
+using SemanticKernelPoc.Api.Services.Intelligence;
+using SemanticKernelPoc.Api.Services.Workflows;
 
 namespace SemanticKernelPoc.Api.Controllers;
 
@@ -24,17 +27,26 @@ public class ChatController : ControllerBase
     private readonly Kernel _kernel;
     private readonly ITokenAcquisition _tokenAcquisition;
     private readonly IConversationMemoryService _conversationMemory;
+    private readonly IConversationContextService _conversationContext;
+    private readonly ISmartFunctionSelector _functionSelector;
+    private readonly IWorkflowOrchestrator _workflowOrchestrator;
 
     public ChatController(
         ILogger<ChatController> logger,
         Kernel kernel,
         ITokenAcquisition tokenAcquisition,
-        IConversationMemoryService conversationMemory)
+        IConversationMemoryService conversationMemory,
+        IConversationContextService conversationContext,
+        ISmartFunctionSelector functionSelector,
+        IWorkflowOrchestrator workflowOrchestrator)
     {
         _logger = logger;
         _kernel = kernel;
         _tokenAcquisition = tokenAcquisition;
         _conversationMemory = conversationMemory;
+        _conversationContext = conversationContext;
+        _functionSelector = functionSelector;
+        _workflowOrchestrator = workflowOrchestrator;
     }
 
     [HttpPost("send")]
@@ -63,6 +75,79 @@ public class ChatController : ControllerBase
             // Save user message to conversation memory
             await _conversationMemory.AddMessageAsync(message);
 
+            // Get or create conversation context
+            var conversationContext = await _conversationContext.GetConversationContextAsync(message.SessionId);
+            conversationContext.UserId = userId ?? "";
+
+            // Check for workflow triggers before processing normally
+            var workflowTrigger = await _workflowOrchestrator.DetectWorkflowTriggerAsync(message.Content, conversationContext);
+            
+            if (!string.IsNullOrEmpty(workflowTrigger.WorkflowDefinitionId))
+            {
+                _logger.LogInformation("Workflow trigger detected: {WorkflowId} for user {UserId}", 
+                    workflowTrigger.WorkflowDefinitionId, userId);
+                
+                // Get the workflow definition
+                var workflowDefinition = await _workflowOrchestrator.GetWorkflowDefinitionAsync(workflowTrigger.WorkflowDefinitionId);
+                
+                if (!string.IsNullOrEmpty(workflowDefinition.Id))
+                {
+                    // Get user's Microsoft Graph token for workflow execution
+                    string workflowUserAccessToken = null;
+                    try
+                    {
+                        workflowUserAccessToken = await _tokenAcquisition.GetAccessTokenForUserAsync(
+                            scopes: new[] { "https://graph.microsoft.com/.default" },
+                            user: User);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Could not acquire Microsoft Graph token for workflow execution");
+                        return StatusCode(500, new ChatMessage
+                        {
+                            Id = Guid.NewGuid().ToString(),
+                            Content = "I need access to your Microsoft 365 data to execute this workflow. Please ensure you're properly authenticated.",
+                            UserId = "ai-assistant",
+                            UserName = "AI Assistant",
+                            Timestamp = DateTime.UtcNow,
+                            IsAiResponse = true,
+                            SessionId = message.SessionId
+                        });
+                    }
+
+                    // Create a full kernel for workflow execution
+                    var workflowKernel = CreateUserContextKernel(workflowUserAccessToken, userId, userName);
+                    
+                    // Execute the workflow
+                    var workflowExecution = await _workflowOrchestrator.ExecuteWorkflowAsync(
+                        workflowDefinition, message.Content, conversationContext, workflowKernel);
+                    
+                    // Generate response based on workflow execution
+                    var workflowResponse = GenerateWorkflowResponse(workflowExecution, workflowDefinition);
+                    
+                    // Create AI response message
+                    var workflowAiResponse = new ChatMessage
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        Content = workflowResponse,
+                        UserId = "ai-assistant",
+                        UserName = "AI Assistant",
+                        Timestamp = DateTime.UtcNow,
+                        IsAiResponse = true,
+                        SessionId = message.SessionId,
+                        WorkflowId = workflowExecution.Id
+                    };
+
+                    // Save AI response to conversation memory
+                    await _conversationMemory.AddMessageAsync(workflowAiResponse);
+                    
+                    _logger.LogInformation("Workflow execution completed for user {UserId}: {Status}", 
+                        userId, workflowExecution.Status);
+                    
+                    return Ok(workflowAiResponse);
+                }
+            }
+
             // Get user's Microsoft Graph token for user-context operations
             string userAccessToken = null;
             try
@@ -80,70 +165,28 @@ public class ChatController : ControllerBase
             // Create a user-context kernel with the user's token
             var userKernel = CreateUserContextKernel(userAccessToken, userId, userName);
 
+            // Get all available functions for smart selection
+            var allFunctions = userKernel.Plugins.GetFunctionsMetadata();
+            
+            // Use smart function selection to determine relevant functions
+            var functionSelection = _functionSelector.SelectRelevantFunctions(
+                message.Content, conversationContext, allFunctions);
+
+            _logger.LogInformation("Smart function selection: {SelectionReason}", functionSelection.SelectionReason);
+
+            // Create a filtered kernel with only relevant functions
+            var filteredKernel = CreateFilteredKernel(userKernel, functionSelection.SelectedFunctions);
+
             // Get the chat completion service
-            var chatCompletionService = userKernel.GetRequiredService<IChatCompletionService>();
+            var chatCompletionService = filteredKernel.GetRequiredService<IChatCompletionService>();
             
             // Load conversation history and create chat history
             var conversationHistory = await _conversationMemory.GetConversationHistoryAsync(message.SessionId, maxMessages: 20);
             var chatHistory = new ChatHistory();
             
-            // Add system message
-            chatHistory.AddSystemMessage(
-                $"You are a helpful AI assistant for {userName ?? "the user"}. " +
-                "You have access to Microsoft Graph and can help with comprehensive productivity tasks across Microsoft 365. " +
-                "When the user asks for information or actions related to their Microsoft 365 data, you can access it using their authenticated context. " +
-                
-                "🚨 CRITICAL FUNCTION CALLING RULES:\n" +
-                "1. When user asks for 'today' or 'today's events' → call GetTodaysEvents()\n" +
-                "2. When user asks for 'next appointment', 'next event', 'my next appointment', 'when is my next appointment' → call GetNextAppointment()\n" +
-                "3. When user asks for 'this month' → call GetEventCount(timePeriod='this_month', includeDetails=true)\n" +
-                "4. When user asks for 'upcoming this month' or 'upcoming events this month' → call GetEventCount(timePeriod='this_month_upcoming', includeDetails=true)\n" +
-                "5. When user asks for 'this week' → call GetEventCount(timePeriod='this_week', includeDetails=true)\n" +
-                "6. When user asks for 'upcoming this week' or 'upcoming events this week' → call GetEventCount(timePeriod='this_week_upcoming', includeDetails=true)\n" +
-                "7. When user asks for 'upcoming' or 'appointments' (general) → call GetUpcomingEvents()\n" +
-                "8. When user asks for 'notes', 'my notes', 'show notes' → call GetRecentNotes()\n" +
-                "9. When functions return 'CALENDAR_CARDS:' or 'NOTE_CARDS:' → return ONLY that exact response, no additional text\n" +
-                "10. NEVER provide manual responses for calendar or note data - ALWAYS use functions first\n" +
-                
-                "🎯 CONVERSATIONAL APPROACH:\n" +
-                "• ALWAYS use a step-by-step conversational approach when information is missing\n" +
-                "• Ask for ONE piece of missing information at a time\n" +
-                "• Only call functions when you have ALL required parameters\n" +
-                "• Be conversational and friendly in your requests for information\n" +
-                "• Remember previous answers in the conversation to avoid re-asking\n" +
-                
-                "🔹 CALENDAR CAPABILITIES:\n" +
-                "• View upcoming events and today's schedule (GetUpcomingEvents, GetTodaysEvents)\n" +
-                "• Get EVENT COUNTS for specific time periods (GetEventCount)\n" +
-                "• Add new calendar events with attendees, locations, and descriptions (AddCalendarEvent)\n" +
-                "• Get events in specific date ranges (GetEventsInDateRange)\n" +
-                
-                "🔹 NOTE-TAKING CAPABILITIES:\n" +
-                "• Create notes as To Do tasks - when user says 'create a note', use CreateNote function\n" +
-                "• Get recent notes - ALWAYS use GetRecentNotes function when user asks for notes\n" +
-                "• Search notes - ALWAYS use SearchNotes function when user wants to find specific notes\n" +
-                "• Mark notes as complete or update their status\n" +
-                
-                "🔹 EMAIL CAPABILITIES:\n" +
-                "• Read recent emails with previews and metadata\n" +
-                "• Send emails immediately with CC support and importance levels\n" +
-                "• Search emails by subject, sender, or content\n" +
-                
-                "🔹 SHAREPOINT CAPABILITIES:\n" +
-                "• Browse and search SharePoint sites the user has access to\n" +
-                "• View site details, document libraries, and file information\n" +
-                "• Search for files across SharePoint with various filters\n" +
-                
-                "🚨 CRITICAL INSTRUCTIONS:\n" +
-                "1. When ANY calendar plugin function returns data that starts with 'CALENDAR_CARDS:', you MUST return ONLY that exact response.\n" +
-                "2. When ANY note/todo plugin function returns data that starts with 'NOTE_CARDS:', you MUST return ONLY that exact response.\n" +
-                "3. For calendar-related requests, ONLY call calendar functions and return their responses directly.\n" +
-                "4. For note-related requests, ONLY call note functions and return their responses directly.\n" +
-                "5. NEVER generate partial CALENDAR_CARDS or NOTE_CARDS responses manually.\n" +
-                
-                "Always be respectful of privacy and only access what is needed to fulfill requests. " +
-                "Provide clear, helpful responses with actionable information. " +
-                "Remember: Use functions for data retrieval, be conversational, and return card data exactly as provided by functions.");
+            // Build contextual system message
+            var systemMessage = BuildContextualSystemMessage(userName, conversationContext, functionSelection);
+            chatHistory.AddSystemMessage(systemMessage);
             
             // Add conversation history (excluding the current message as it's already processed)
             foreach (var historyMessage in conversationHistory.Where(m => m.Id != message.Id).OrderBy(m => m.Timestamp))
@@ -176,7 +219,17 @@ public class ChatController : ControllerBase
             var response = await chatCompletionService.GetChatMessageContentAsync(
                 chatHistory, 
                 executionSettings, 
-                userKernel);
+                filteredKernel);
+
+            // Extract called functions for context update
+            var calledFunctions = ExtractCalledFunctions(response);
+
+            // Update conversation context with the interaction
+            _functionSelector.UpdateConversationContext(
+                conversationContext, message.Content, response.Content ?? "", calledFunctions);
+            
+            // Save updated context
+            await _conversationContext.UpdateConversationContextAsync(conversationContext);
 
             _logger.LogInformation("Raw AI response content: {Content}", response.Content);
 
@@ -258,12 +311,17 @@ public class ChatController : ControllerBase
             var calendarPlugin = new CalendarPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<CalendarPlugin>>());
             var todoPlugin = new ToDoPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<ToDoPlugin>>());
             
+            // Create a temporary kernel for the MeetingPlugin (it needs access to the kernel for AI operations)
+            var tempKernel = kernelBuilder.Build();
+            var meetingPlugin = new MeetingPlugin(graphService.CreateClient(userAccessToken), tempKernel);
+            
             kernelBuilder.Plugins.AddFromObject(new SharePointPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<SharePointPlugin>>()));
             kernelBuilder.Plugins.AddFromObject(new OneDrivePlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<OneDrivePlugin>>()));
             kernelBuilder.Plugins.AddFromObject(calendarPlugin);
             kernelBuilder.Plugins.AddFromObject(new MailPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<MailPlugin>>()));
             kernelBuilder.Plugins.AddFromObject(todoPlugin);
-            _logger.LogInformation("Added SharePoint, OneDrive, Calendar, Mail, and ToDo plugins for user {UserId}", userId);
+            kernelBuilder.Plugins.AddFromObject(meetingPlugin);
+            _logger.LogInformation("Added SharePoint, OneDrive, Calendar, Mail, ToDo, and Meeting plugins for user {UserId}", userId);
         }
 
         var kernel = kernelBuilder.Build();
@@ -282,6 +340,184 @@ public class ChatController : ControllerBase
         }
 
         return kernel;
+    }
+
+    private Kernel CreateFilteredKernel(Kernel sourceKernel, IEnumerable<string> selectedFunctions)
+    {
+        var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>()
+            .GetSection("SemanticKernel").Get<SemanticKernelConfig>()
+            ?? throw new InvalidOperationException("SemanticKernel configuration is missing");
+
+        var kernelBuilder = Kernel.CreateBuilder();
+        
+        // Add the AI service (same as source kernel)
+        if (config.UseAzureOpenAI)
+        {
+            kernelBuilder.AddAzureOpenAIChatCompletion(
+                deploymentName: config.DeploymentOrModelId,
+                endpoint: config.Endpoint,
+                apiKey: config.ApiKey);
+        }
+        else
+        {
+            kernelBuilder.AddOpenAIChatCompletion(
+                modelId: config.DeploymentOrModelId,
+                apiKey: config.ApiKey);
+        }
+
+        var filteredKernel = kernelBuilder.Build();
+
+        // Copy user context data
+        foreach (var (key, value) in sourceKernel.Data)
+        {
+            filteredKernel.Data[key] = value;
+        }
+
+        // Add only selected plugins/functions
+        var userAccessToken = sourceKernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
+        if (!string.IsNullOrEmpty(userAccessToken))
+        {
+            var graphService = HttpContext.RequestServices.GetRequiredService<IGraphService>();
+            
+            // Only add plugins that have selected functions
+            var selectedPlugins = selectedFunctions.Select(f => f.Split('.')[0]).Distinct();
+            
+            foreach (var pluginName in selectedPlugins)
+            {
+                switch (pluginName.ToLowerInvariant())
+                {
+                    case "calendarplugin":
+                        var calendarPlugin = new CalendarPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<CalendarPlugin>>());
+                        filteredKernel.Plugins.AddFromObject(calendarPlugin);
+                        break;
+                    case "todoplugin":
+                        var todoPlugin = new ToDoPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<ToDoPlugin>>());
+                        filteredKernel.Plugins.AddFromObject(todoPlugin);
+                        break;
+                    case "mailplugin":
+                        var mailPlugin = new MailPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<MailPlugin>>());
+                        filteredKernel.Plugins.AddFromObject(mailPlugin);
+                        break;
+                    case "sharepointplugin":
+                        var sharePointPlugin = new SharePointPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<SharePointPlugin>>());
+                        filteredKernel.Plugins.AddFromObject(sharePointPlugin);
+                        break;
+                    case "onedriveplugin":
+                        var oneDrivePlugin = new OneDrivePlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<OneDrivePlugin>>());
+                        filteredKernel.Plugins.AddFromObject(oneDrivePlugin);
+                        break;
+                    case "meetingplugin":
+                        var meetingPlugin = new MeetingPlugin(graphService.CreateClient(userAccessToken), filteredKernel);
+                        filteredKernel.Plugins.AddFromObject(meetingPlugin);
+                        break;
+                }
+            }
+        }
+
+        _logger.LogDebug("Created filtered kernel with {PluginCount} plugins for {FunctionCount} selected functions", 
+            filteredKernel.Plugins.Count(), selectedFunctions.Count());
+
+        return filteredKernel;
+    }
+
+    private IEnumerable<string> ExtractCalledFunctions(ChatMessageContent response)
+    {
+        // In a real implementation, you would extract this from the response metadata
+        // For now, we'll return an empty list as the function calling is automatic
+        // and we don't have direct access to which functions were called
+        return new List<string>();
+    }
+
+    private string BuildContextualSystemMessage(string userName, ConversationContext context, SmartFunctionSelection functionSelection)
+    {
+        var baseMessage = $"You are a helpful AI assistant for {userName ?? "the user"}. " +
+            "You have access to Microsoft Graph and can help with comprehensive productivity tasks across Microsoft 365. " +
+            "When the user asks for information or actions related to their Microsoft 365 data, you can access it using their authenticated context.\n\n";
+
+        // Add workflow context if active
+        if (context.CurrentWorkflow.CurrentState != WorkflowState.None)
+        {
+            baseMessage += $"🔄 ACTIVE WORKFLOW: {context.CurrentWorkflow.CurrentState} (Step {context.CurrentWorkflow.StepNumber})\n" +
+                          $"Continue helping the user with their {context.CurrentWorkflow.CurrentState.ToString().ToLower()} workflow.\n\n";
+        }
+
+        // Add function selection context
+        if (functionSelection.SelectedFunctions.Any())
+        {
+            baseMessage += $"🎯 AVAILABLE FUNCTIONS: {functionSelection.SelectedFunctions.Count} relevant functions selected based on context.\n" +
+                          $"Selection reason: {functionSelection.SelectionReason}\n\n";
+        }
+
+        // Add recent topics context
+        if (context.RecentTopics.Any())
+        {
+            baseMessage += $"📝 RECENT TOPICS: {string.Join(", ", context.RecentTopics.TakeLast(5))}\n\n";
+        }
+
+        baseMessage += 
+            "🚨 CRITICAL FUNCTION CALLING RULES:\n" +
+            "1. When user asks for 'today' or 'today's events' → call GetTodaysEvents()\n" +
+            "2. When user asks for 'next appointment', 'next event', 'my next appointment', 'when is my next appointment' → call GetNextAppointment()\n" +
+            "3. When user asks for 'this month' → call GetEventCount(timePeriod='this_month', includeDetails=true)\n" +
+            "4. When user asks for 'upcoming this month' or 'upcoming events this month' → call GetEventCount(timePeriod='this_month_upcoming', includeDetails=true)\n" +
+            "5. When user asks for 'this week' → call GetEventCount(timePeriod='this_week', includeDetails=true)\n" +
+            "6. When user asks for 'upcoming this week' or 'upcoming events this week' → call GetEventCount(timePeriod='this_week_upcoming', includeDetails=true)\n" +
+            "7. When user asks for 'upcoming' or 'appointments' (general) → call GetUpcomingEvents()\n" +
+            "8. When user asks for 'notes', 'my notes', 'show notes' → call GetRecentNotes()\n" +
+            "9. When user asks for 'tasks', 'my tasks', 'todo', 'assigned to me', 'task list', 'what tasks' → call GetRecentNotes()\n" +
+            "10. When functions return 'CALENDAR_CARDS:' or 'NOTE_CARDS:' → return ONLY that exact response, no additional text\n" +
+            "11. NEVER provide manual responses for calendar, note, or task data - ALWAYS use functions first\n\n" +
+            
+            "🎯 CONVERSATIONAL APPROACH:\n" +
+            "• ALWAYS use a step-by-step conversational approach when information is missing\n" +
+            "• Ask for ONE piece of missing information at a time\n" +
+            "• Only call functions when you have ALL required parameters\n" +
+            "• Be conversational and friendly in your requests for information\n" +
+            "• Remember previous answers in the conversation to avoid re-asking\n\n" +
+            
+            "🔹 CALENDAR CAPABILITIES:\n" +
+            "• View upcoming events and today's schedule (GetUpcomingEvents, GetTodaysEvents)\n" +
+            "• Get EVENT COUNTS for specific time periods (GetEventCount)\n" +
+            "• Add new calendar events with attendees, locations, and descriptions (AddCalendarEvent)\n" +
+            "• Get events in specific date ranges (GetEventsInDateRange)\n\n" +
+            
+            "🔹 NOTE-TAKING & TASK CAPABILITIES:\n" +
+            "• Create notes/tasks - when user says 'create a note' or 'create task', use CreateNote function\n" +
+            "• Get recent notes/tasks - ALWAYS use GetRecentNotes function when user asks for notes, tasks, todo, or assigned items\n" +
+            "• Search notes/tasks - ALWAYS use SearchNotes function when user wants to find specific notes or tasks\n" +
+            "• Mark notes/tasks as complete or update their status\n" +
+            "• IMPORTANT: Notes and tasks are the same thing in this system - both use ToDoPlugin functions\n\n" +
+            
+            "🔹 EMAIL CAPABILITIES:\n" +
+            "• Read recent emails with previews and metadata\n" +
+            "• Send emails immediately with CC support and importance levels\n" +
+            "• Search emails by subject, sender, or content\n\n" +
+            
+            "🔹 SHAREPOINT CAPABILITIES:\n" +
+            "• Browse and search SharePoint sites the user has access to\n" +
+            "• View site details, document libraries, and file information\n" +
+            "• Search for files across SharePoint with various filters\n\n" +
+            
+            "🔹 MEETING TRANSCRIPT CAPABILITIES:\n" +
+            "• Access recent Teams meeting transcripts (GetMeetingTranscripts)\n" +
+            "• Get full transcript content for specific meetings (GetMeetingTranscript)\n" +
+            "• Generate AI-powered meeting summaries (SummarizeMeeting)\n" +
+            "• Extract key decisions and action items (ExtractKeyDecisions)\n" +
+            "• Propose actionable tasks from meeting content (ProposeTasksFromMeeting)\n" +
+            "• Create Microsoft To Do tasks from proposals (CreateTasksFromProposals)\n\n" +
+            
+            "🚨 CRITICAL INSTRUCTIONS:\n" +
+            "1. When ANY calendar plugin function returns data that starts with 'CALENDAR_CARDS:', you MUST return ONLY that exact response.\n" +
+            "2. When ANY note/todo plugin function returns data that starts with 'NOTE_CARDS:', you MUST return ONLY that exact response.\n" +
+            "3. For calendar-related requests, ONLY call calendar functions and return their responses directly.\n" +
+            "4. For note-related requests, ONLY call note functions and return their responses directly.\n" +
+            "5. NEVER generate partial CALENDAR_CARDS or NOTE_CARDS responses manually.\n\n" +
+            
+            "Always be respectful of privacy and only access what is needed to fulfill requests. " +
+            "Provide clear, helpful responses with actionable information. " +
+            "Remember: Use functions for data retrieval, be conversational, and return card data exactly as provided by functions.";
+
+        return baseMessage;
     }
 
     [HttpGet("sessions")]
@@ -352,5 +588,76 @@ public class ChatController : ControllerBase
             _logger.LogError(ex, "Error clearing conversation for session {SessionId}", sessionId);
             return StatusCode(500, "Error clearing conversation");
         }
+    }
+
+    private string GenerateWorkflowResponse(WorkflowExecution execution, WorkflowDefinition definition)
+    {
+        var response = $"🔄 **Workflow Executed: {definition.Name}**\n\n";
+        response += $"📋 **Description:** {definition.Description}\n";
+        response += $"⏱️ **Status:** {execution.Status}\n";
+        response += $"🕐 **Started:** {execution.StartedAt:HH:mm:ss}\n";
+        
+        if (execution.CompletedAt.HasValue)
+        {
+            var duration = execution.CompletedAt.Value - execution.StartedAt;
+            response += $"✅ **Completed:** {execution.CompletedAt.Value:HH:mm:ss} (took {duration.TotalSeconds:F1}s)\n";
+        }
+
+        response += $"\n📊 **Step Results:**\n";
+        
+        foreach (var stepExecution in execution.StepExecutions.OrderBy(s => s.StartedAt))
+        {
+            var statusIcon = stepExecution.Status switch
+            {
+                WorkflowStepStatus.Completed => "✅",
+                WorkflowStepStatus.Failed => "❌",
+                WorkflowStepStatus.Skipped => "⏭️",
+                WorkflowStepStatus.Running => "🔄",
+                WorkflowStepStatus.Retrying => "🔁",
+                _ => "⏸️"
+            };
+            
+            response += $"{statusIcon} **{stepExecution.StepName}**: {stepExecution.Status}";
+            
+            if (stepExecution.ExecutionTime.HasValue)
+            {
+                response += $" ({stepExecution.ExecutionTime.Value.TotalMilliseconds:F0}ms)";
+            }
+            
+            if (!string.IsNullOrEmpty(stepExecution.ErrorMessage))
+            {
+                response += $"\n   ⚠️ Error: {stepExecution.ErrorMessage}";
+            }
+            
+            response += "\n";
+        }
+
+        // Include final outputs if available
+        if (execution.FinalOutputs.Any())
+        {
+            response += "\n🎯 **Results:**\n";
+            foreach (var output in execution.FinalOutputs.Take(3)) // Limit to first 3 outputs
+            {
+                response += $"• **{output.Key}**: {output.Value}\n";
+            }
+        }
+
+        // Add error message if workflow failed
+        if (execution.Status == WorkflowExecutionStatus.Failed && !string.IsNullOrEmpty(execution.ErrorMessage))
+        {
+            response += $"\n❌ **Error:** {execution.ErrorMessage}\n";
+        }
+
+        // Add success message for completed workflows
+        if (execution.Status == WorkflowExecutionStatus.Completed)
+        {
+            response += "\n🎉 **Workflow completed successfully!** All steps executed as planned.";
+        }
+        else if (execution.Status == WorkflowExecutionStatus.PartiallyCompleted)
+        {
+            response += "\n⚠️ **Workflow partially completed.** Some steps succeeded while others failed.";
+        }
+
+        return response;
     }
 } 
