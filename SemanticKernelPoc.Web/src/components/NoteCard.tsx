@@ -16,6 +16,7 @@ interface NoteItem {
   priorityColor: string;
   statusColor: string;
   webLink?: string;
+  isNewlyCreated?: boolean;
 }
 
 interface NoteCardProps {
@@ -127,20 +128,30 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
               <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
             </svg>
           </div>
-          <div>
-            <h3 
-              className="text-lg font-bold"
-              style={{ color: 'var(--text-primary)', fontWeight: '700' }}
-              title={`${notes.length} ${notes.length === 1 ? 'note' : 'notes'} found`}
-            >
-              {notes.length === 1 ? 'Note' : `${notes.length} Notes`}
-            </h3>
+          <div className="flex-1">
+            <div className="flex items-center space-x-2">
+              <h3 
+                className="text-lg font-bold"
+                style={{ color: 'var(--text-primary)', fontWeight: '700' }}
+                title={`${notes.length} ${notes.length === 1 ? 'note' : 'notes'} found`}
+              >
+                {notes.length === 1 ? 'Note' : `${notes.length} Notes`}
+              </h3>
+              {notes.some(note => note.isNewlyCreated) && (
+                <span 
+                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"
+                  title="This note was just created"
+                >
+                  ✨ Just Created
+                </span>
+              )}
+            </div>
             <p 
               className="text-sm"
               style={{ color: 'var(--text-secondary)' }}
               title="Your recent notes and tasks from Microsoft To Do"
             >
-              Your recent notes and tasks
+              {notes.some(note => note.isNewlyCreated) ? 'Successfully created your new note!' : 'Your recent notes and tasks'}
             </p>
           </div>
         </div>

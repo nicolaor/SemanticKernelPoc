@@ -16,6 +16,7 @@ using SemanticKernelPoc.Api.Services.Memory;
 using SemanticKernelPoc.Api.Services.Intelligence;
 using SemanticKernelPoc.Api.Services.Workflows;
 
+
 namespace SemanticKernelPoc.Api.Controllers;
 
 [Authorize]
@@ -30,6 +31,8 @@ public class ChatController : ControllerBase
     private readonly IConversationContextService _conversationContext;
     private readonly ISmartFunctionSelector _functionSelector;
     private readonly IWorkflowOrchestrator _workflowOrchestrator;
+    private readonly IProcessFrameworkOrchestrator _processFrameworkOrchestrator;
+
 
     public ChatController(
         ILogger<ChatController> logger,
@@ -38,7 +41,8 @@ public class ChatController : ControllerBase
         IConversationMemoryService conversationMemory,
         IConversationContextService conversationContext,
         ISmartFunctionSelector functionSelector,
-        IWorkflowOrchestrator workflowOrchestrator)
+        IWorkflowOrchestrator workflowOrchestrator,
+        IProcessFrameworkOrchestrator processFrameworkOrchestrator)
     {
         _logger = logger;
         _kernel = kernel;
@@ -47,6 +51,7 @@ public class ChatController : ControllerBase
         _conversationContext = conversationContext;
         _functionSelector = functionSelector;
         _workflowOrchestrator = workflowOrchestrator;
+        _processFrameworkOrchestrator = processFrameworkOrchestrator;
     }
 
     [HttpPost("send")]
@@ -79,18 +84,19 @@ public class ChatController : ControllerBase
             var conversationContext = await _conversationContext.GetConversationContextAsync(message.SessionId);
             conversationContext.UserId = userId ?? "";
 
-            // Check for workflow triggers before processing normally
-            var workflowTrigger = await _workflowOrchestrator.DetectWorkflowTriggerAsync(message.Content, conversationContext);
+            // Check for workflow triggers before processing normally (using Process Framework)
+            var workflowTrigger = await _processFrameworkOrchestrator.DetectWorkflowTriggerAsync(message.Content, conversationContext);
             
             if (!string.IsNullOrEmpty(workflowTrigger.WorkflowDefinitionId))
             {
                 _logger.LogInformation("Workflow trigger detected: {WorkflowId} for user {UserId}", 
                     workflowTrigger.WorkflowDefinitionId, userId);
                 
-                // Get the workflow definition
-                var workflowDefinition = await _workflowOrchestrator.GetWorkflowDefinitionAsync(workflowTrigger.WorkflowDefinitionId);
+                // Get the available processes
+                var availableProcesses = await _processFrameworkOrchestrator.GetAvailableProcessesAsync();
+                var processDefinition = availableProcesses.FirstOrDefault(p => p.Id == workflowTrigger.WorkflowDefinitionId);
                 
-                if (!string.IsNullOrEmpty(workflowDefinition.Id))
+                if (processDefinition != null)
                 {
                     // Get user's Microsoft Graph token for workflow execution
                     string workflowUserAccessToken = null;
@@ -118,12 +124,18 @@ public class ChatController : ControllerBase
                     // Create a full kernel for workflow execution
                     var workflowKernel = CreateUserContextKernel(workflowUserAccessToken, userId, userName);
                     
-                    // Execute the workflow
-                    var workflowExecution = await _workflowOrchestrator.ExecuteWorkflowAsync(
-                        workflowDefinition, message.Content, conversationContext, workflowKernel);
+                    // Execute the process using Process Framework
+                    var processInputs = new Dictionary<string, object>
+                    {
+                        ["userMessage"] = message.Content,
+                        ["context"] = conversationContext
+                    };
                     
-                    // Generate response based on workflow execution
-                    var workflowResponse = GenerateWorkflowResponse(workflowExecution, workflowDefinition);
+                    var processExecution = await _processFrameworkOrchestrator.ExecuteProcessAsync(
+                        processDefinition.Id, processInputs);
+                    
+                    // Generate response based on process execution
+                    var workflowResponse = GenerateProcessResponse(processExecution, processDefinition);
                     
                     // Create AI response message
                     var workflowAiResponse = new ChatMessage
@@ -135,14 +147,14 @@ public class ChatController : ControllerBase
                         Timestamp = DateTime.UtcNow,
                         IsAiResponse = true,
                         SessionId = message.SessionId,
-                        WorkflowId = workflowExecution.Id
+                        WorkflowId = processDefinition.Id
                     };
 
                     // Save AI response to conversation memory
                     await _conversationMemory.AddMessageAsync(workflowAiResponse);
                     
-                    _logger.LogInformation("Workflow execution completed for user {UserId}: {Status}", 
-                        userId, workflowExecution.Status);
+                    _logger.LogInformation("Process execution completed for user {UserId}: {Status}", 
+                        userId, processExecution.IsSuccess ? "Success" : "Failed");
                     
                     return Ok(workflowAiResponse);
                 }
@@ -212,7 +224,7 @@ public class ChatController : ControllerBase
             {
                 ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
                 MaxTokens = 4000,
-                Temperature = 0.1
+                Temperature = 0.0  // Set to 0 for maximum determinism in following instructions
             };
 
             // Get the AI response with automatic function calling enabled
@@ -239,7 +251,11 @@ public class ChatController : ControllerBase
             // Log if we detect card data (for debugging)
             if (finalContent.Contains("CALENDAR_CARDS:") || finalContent.Contains("NOTE_CARDS:"))
             {
-                _logger.LogInformation("Response contains card data, passing through as-is");
+                _logger.LogInformation("✅ Response contains card data, passing through as-is");
+            }
+            else if (calledFunctions.Any(f => f.Contains("Calendar") || f.Contains("ToDo")))
+            {
+                _logger.LogWarning("⚠️ Calendar/ToDo function was called but response doesn't contain card data. Functions called: {Functions}", string.Join(", ", calledFunctions));
             }
 
             // Create AI response message
@@ -432,7 +448,11 @@ public class ChatController : ControllerBase
     {
         var baseMessage = $"You are a helpful AI assistant for {userName ?? "the user"}. " +
             "You have access to Microsoft Graph and can help with comprehensive productivity tasks across Microsoft 365. " +
-            "When the user asks for information or actions related to their Microsoft 365 data, you can access it using their authenticated context.\n\n";
+            "When the user asks for information or actions related to their Microsoft 365 data, you can access it using their authenticated context.\n\n" +
+            
+            "⚠️ CRITICAL: When plugin functions return data starting with 'CALENDAR_CARDS:' or 'NOTE_CARDS:', " +
+            "you MUST return ONLY that exact response with NO modifications, additions, or interpretations. " +
+            "The frontend handles all formatting and display.\n\n";
 
         // Add workflow context if active
         if (context.CurrentWorkflow.CurrentState != WorkflowState.None)
@@ -465,7 +485,7 @@ public class ChatController : ControllerBase
             "7. When user asks for 'upcoming' or 'appointments' (general) → call GetUpcomingEvents()\n" +
             "8. When user asks for 'notes', 'my notes', 'show notes' → call GetRecentNotes()\n" +
             "9. When user asks for 'tasks', 'my tasks', 'todo', 'assigned to me', 'task list', 'what tasks' → call GetRecentNotes()\n" +
-            "10. When functions return 'CALENDAR_CARDS:' or 'NOTE_CARDS:' → return ONLY that exact response, no additional text\n" +
+            "10. When functions return 'CALENDAR_CARDS:' or 'NOTE_CARDS:' → IMMEDIATELY return ONLY that exact response with ZERO additional text, formatting, or interpretation\n" +
             "11. NEVER provide manual responses for calendar, note, or task data - ALWAYS use functions first\n\n" +
             
             "🎯 CONVERSATIONAL APPROACH:\n" +
@@ -473,20 +493,25 @@ public class ChatController : ControllerBase
             "• Ask for ONE piece of missing information at a time\n" +
             "• Only call functions when you have ALL required parameters\n" +
             "• Be conversational and friendly in your requests for information\n" +
-            "• Remember previous answers in the conversation to avoid re-asking\n\n" +
+            "• Remember previous answers in the conversation to avoid re-asking\n" +
+            "• ⚠️ CRITICAL: When calling creation functions (CreateNote, AddCalendarEvent), WAIT for the function to complete and return the result before responding\n" +
+            "• ✅ CREATION FLOW: For creation requests, call the function and return ONLY the function's response (which will be card data)\n" +
+            "• 🚫 NEVER say 'I'll create...' and then ask for something else - complete the creation first\n\n" +
             
             "🔹 CALENDAR CAPABILITIES:\n" +
             "• View upcoming events and today's schedule (GetUpcomingEvents, GetTodaysEvents)\n" +
             "• Get EVENT COUNTS for specific time periods (GetEventCount)\n" +
-            "• Add new calendar events with attendees, locations, and descriptions (AddCalendarEvent)\n" +
-            "• Get events in specific date ranges (GetEventsInDateRange)\n\n" +
+            "• Add new calendar events with attendees, locations, and descriptions (AddCalendarEvent - returns CALENDAR_CARDS showing the new event)\n" +
+            "• Get events in specific date ranges (GetEventsInDateRange)\n" +
+            "• CREATION FEEDBACK: AddCalendarEvent function automatically shows the newly created event as a card with a 'Just Created' indicator\n\n" +
             
             "🔹 NOTE-TAKING & TASK CAPABILITIES:\n" +
-            "• Create notes/tasks - when user says 'create a note' or 'create task', use CreateNote function\n" +
+            "• Create notes/tasks - when user says 'create a note' or 'create task', use CreateNote function (returns NOTE_CARDS showing the new task)\n" +
             "• Get recent notes/tasks - ALWAYS use GetRecentNotes function when user asks for notes, tasks, todo, or assigned items\n" +
             "• Search notes/tasks - ALWAYS use SearchNotes function when user wants to find specific notes or tasks\n" +
             "• Mark notes/tasks as complete or update their status\n" +
-            "• IMPORTANT: Notes and tasks are the same thing in this system - both use ToDoPlugin functions\n\n" +
+            "• IMPORTANT: Notes and tasks are the same thing in this system - both use ToDoPlugin functions\n" +
+            "• CREATION FEEDBACK: CreateNote function automatically shows the newly created task as a card with a 'Just Created' indicator\n\n" +
             
             "🔹 EMAIL CAPABILITIES:\n" +
             "• Read recent emails with previews and metadata\n" +
@@ -506,12 +531,17 @@ public class ChatController : ControllerBase
             "• Propose actionable tasks from meeting content (ProposeTasksFromMeeting)\n" +
             "• Create Microsoft To Do tasks from proposals (CreateTasksFromProposals)\n\n" +
             
-            "🚨 CRITICAL INSTRUCTIONS:\n" +
-            "1. When ANY calendar plugin function returns data that starts with 'CALENDAR_CARDS:', you MUST return ONLY that exact response.\n" +
-            "2. When ANY note/todo plugin function returns data that starts with 'NOTE_CARDS:', you MUST return ONLY that exact response.\n" +
-            "3. For calendar-related requests, ONLY call calendar functions and return their responses directly.\n" +
-            "4. For note-related requests, ONLY call note functions and return their responses directly.\n" +
-            "5. NEVER generate partial CALENDAR_CARDS or NOTE_CARDS responses manually.\n\n" +
+            "🚨 CRITICAL INSTRUCTIONS - FOLLOW EXACTLY:\n" +
+            "1. When ANY calendar plugin function returns data that starts with 'CALENDAR_CARDS:', you MUST return ONLY that exact response with NO additional text, formatting, or interpretation.\n" +
+            "2. When ANY note/todo plugin function returns data that starts with 'NOTE_CARDS:', you MUST return ONLY that exact response with NO additional text, formatting, or interpretation.\n" +
+            "3. For calendar-related requests, ONLY call calendar functions and return their responses directly - DO NOT interpret or summarize the data.\n" +
+            "4. For note-related requests, ONLY call note functions and return their responses directly - DO NOT interpret or summarize the data.\n" +
+            "5. NEVER generate partial CALENDAR_CARDS or NOTE_CARDS responses manually.\n" +
+            "6. NEVER add introductory text like 'Here are your events' before CALENDAR_CARDS responses.\n" +
+            "7. NEVER add explanatory text after CALENDAR_CARDS responses.\n" +
+            "8. The frontend will handle all formatting and display of card data - your job is ONLY to return the raw card data.\n" +
+            "9. ✨ CREATION FEEDBACK: When users create items (notes, tasks, calendar events), the functions automatically return card data showing the newly created items with special 'Just Created' indicators.\n" +
+            "10. 🎯 USER EXPERIENCE: Always provide immediate visual feedback for creation actions - users will see their newly created items as cards, not text confirmations.\n\n" +
             
             "Always be respectful of privacy and only access what is needed to fulfill requests. " +
             "Provide clear, helpful responses with actionable information. " +
@@ -656,6 +686,34 @@ public class ChatController : ControllerBase
         else if (execution.Status == WorkflowExecutionStatus.PartiallyCompleted)
         {
             response += "\n⚠️ **Workflow partially completed.** Some steps succeeded while others failed.";
+        }
+
+        return response;
+    }
+
+    private string GenerateProcessResponse(ProcessExecutionResult execution, WorkflowDefinition definition)
+    {
+        var response = $"🔄 **Process Executed: {definition.Name}**\n\n";
+        response += $"📋 **Description:** {definition.Description}\n";
+        response += $"⏱️ **Status:** {(execution.IsSuccess ? "Completed" : "Failed")}\n";
+        response += $"🕐 **Duration:** {execution.Duration.TotalSeconds:F1}s\n";
+
+        if (execution.IsSuccess)
+        {
+            response += "\n🎉 **Process completed successfully!** All steps executed using the Semantic Kernel Process Framework.";
+            
+            if (execution.Outputs.Any())
+            {
+                response += "\n\n🎯 **Results:**\n";
+                foreach (var output in execution.Outputs.Take(3))
+                {
+                    response += $"• **{output.Key}**: {output.Value}\n";
+                }
+            }
+        }
+        else
+        {
+            response += $"\n❌ **Error:** {execution.ErrorMessage}\n";
         }
 
         return response;

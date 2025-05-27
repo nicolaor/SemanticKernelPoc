@@ -144,16 +144,17 @@ public class CalendarPlugin : BaseGraphPlugin
 
                 var createdEvent = await graphClient.Me.Calendar.Events.PostAsync(newEvent);
 
-                return CreateSuccessResponse(
-                    "Calendar event creation", 
+                // Return the newly created event as a card
+                var newEventResponse = CreateCalendarEventResponse(createdEvent);
+                var calendarData = new CalendarCardsData(
+                    "calendar_events",
+                    1,
                     userName,
-                    ("📅 Subject", createdEvent?.Subject ?? subject),
-                    ("🕐 Start", parsedStart.ToString("yyyy-MM-dd HH:mm")),
-                    ("🕓 End", endDateTime.ToString("yyyy-MM-dd HH:mm")),
-                    ("⏱️ Duration", $"{durationMinutes} minutes"),
-                    ("📍 Location", location ?? "No location"),
-                    ("👥 Attendees", attendees ?? "None")
+                    "newly created event",
+                    new[] { newEventResponse }
                 );
+
+                return CalendarResponseFormats.FormatCalendarCards(calendarData);
             },
             "AddCalendarEvent"
         );

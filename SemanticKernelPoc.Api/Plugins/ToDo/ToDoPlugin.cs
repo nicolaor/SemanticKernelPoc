@@ -77,22 +77,61 @@ public class ToDoPlugin : BaseGraphPlugin
                         DateTime = parsedDueDate.ToString("yyyy-MM-ddTHH:mm:ss.fff"),
                         TimeZone = TimeZoneInfo.Local.Id
                     };
+                    
+                    // Log successful date parsing for debugging
+                    Console.WriteLine($"Successfully parsed due date '{dueDate}' to {parsedDueDate:yyyy-MM-dd}");
+                }
+                else
+                {
+                    // Log failed date parsing for debugging
+                    Console.WriteLine($"Failed to parse due date '{dueDate}', task will be created without due date");
                 }
             }
 
             var createdTask = await graphClient.Me.Todo.Lists[taskList.Id].Tasks.PostAsync(newTask);
 
-            return $"✅ Note created successfully for {userName}!\n" +
-                   $"📝 Note: {noteContent}\n" +
-                   $"📋 List: {taskList.DisplayName}\n" +
-                   $"⚡ Priority: {priority}\n" +
-                   (dueDate != null ? $"📅 Due: {dueDate}\n" : "") +
-                   $"🆔 Task ID: {createdTask?.Id}\n" +
-                   $"💡 Tip: You can search, update, or mark this note as complete later.";
+            // Log successful task creation for debugging
+            Console.WriteLine($"Successfully created task '{createdTask?.Title}' with ID: {createdTask?.Id}");
+
+            // Return the newly created task as a card
+            var newTaskCard = new
+            {
+                id = createdTask?.Id,
+                title = createdTask?.Title ?? noteContent,
+                content = createdTask?.Body?.Content ?? details ?? noteContent,
+                status = createdTask?.Status?.ToString() ?? "NotStarted",
+                priority = createdTask?.Importance?.ToString() ?? priority,
+                dueDate = createdTask?.DueDateTime?.DateTime,
+                dueDateFormatted = createdTask?.DueDateTime?.DateTime != null ? 
+                    DateTime.Parse(createdTask.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
+                list = taskList.DisplayName,
+                created = createdTask?.CreatedDateTime?.ToString("MMM dd, yyyy") ?? DateTime.Now.ToString("MMM dd, yyyy"),
+                createdDateTime = createdTask?.CreatedDateTime ?? DateTimeOffset.Now,
+                isCompleted = false,
+                webLink = $"https://to-do.office.com/tasks/id/{createdTask?.Id}/details",
+                priorityColor = priority.ToLower() switch
+                {
+                    "high" => "#ef4444",
+                    "low" => "#10b981", 
+                    _ => "#6b7280"
+                },
+                statusColor = "#3b82f6", // New task color
+                isNewlyCreated = true // Flag to indicate this is a newly created task
+            };
+
+            return $"NOTE_CARDS: {JsonSerializer.Serialize(new[] { newTaskCard }, new JsonSerializerOptions { WriteIndented = false })}";
+        }
+        catch (Microsoft.Graph.Models.ODataErrors.ODataError odataEx)
+        {
+            var errorMessage = $"Microsoft Graph API Error: {odataEx.Error?.Code} - {odataEx.Error?.Message}";
+            Console.WriteLine($"Graph API error in CreateNote: {errorMessage}");
+            return $"❌ Error creating note: {errorMessage}";
         }
         catch (Exception ex)
         {
-            return $"❌ Error creating note: {ex.Message}";
+            var errorMessage = $"Unexpected error: {ex.Message}";
+            Console.WriteLine($"Unexpected error in CreateNote: {errorMessage}\nStack trace: {ex.StackTrace}");
+            return $"❌ Error creating note: {errorMessage}";
         }
     }
 
@@ -480,12 +519,21 @@ public class ToDoPlugin : BaseGraphPlugin
             return true;
         }
 
+        // Handle month names with day (e.g., "june 2", "december 25")
+        if (TryParseMonthDay(normalized, out result))
+        {
+            return true;
+        }
+
         // Try standard formats
         var formats = new[]
         {
             "yyyy-MM-dd",
             "MM/dd/yyyy",
-            "dd/MM/yyyy"
+            "dd/MM/yyyy",
+            "yyyy/MM/dd",
+            "MM-dd-yyyy",
+            "dd-MM-yyyy"
         };
 
         foreach (var format in formats)
@@ -496,7 +544,63 @@ public class ToDoPlugin : BaseGraphPlugin
             }
         }
 
+        // Try general parsing (this should handle "june 2", "June 2nd", etc.)
         return DateTime.TryParse(input, out result);
+    }
+
+    private bool TryParseMonthDay(string input, out DateTime result)
+    {
+        result = default;
+        
+        try
+        {
+            // Handle formats like "june 2", "december 25", "jan 15"
+            var parts = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 2)
+            {
+                var monthPart = parts[0];
+                var dayPart = parts[1];
+
+                // Try to parse the day
+                if (int.TryParse(dayPart, out var day))
+                {
+                    var currentYear = DateTime.Now.Year;
+                    
+                    // Try to parse month name
+                    var monthNames = new[]
+                    {
+                        "january", "february", "march", "april", "may", "june",
+                        "july", "august", "september", "october", "november", "december",
+                        "jan", "feb", "mar", "apr", "may", "jun",
+                        "jul", "aug", "sep", "oct", "nov", "dec"
+                    };
+
+                    var monthIndex = Array.FindIndex(monthNames, m => m == monthPart);
+                    if (monthIndex >= 0)
+                    {
+                        var month = (monthIndex % 12) + 1; // Convert to 1-12
+                        
+                        // Create the date for this year
+                        var targetDate = new DateTime(currentYear, month, day);
+                        
+                        // If the date has already passed this year, use next year
+                        if (targetDate < DateTime.Today)
+                        {
+                            targetDate = new DateTime(currentYear + 1, month, day);
+                        }
+                        
+                        result = targetDate;
+                        return true;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Fall through to return false
+        }
+        
+        return false;
     }
 
     private GraphServiceClient CreateGraphClient(string userAccessToken)

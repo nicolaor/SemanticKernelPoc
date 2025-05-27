@@ -80,6 +80,7 @@ Automated business processes that intelligently combine multiple Microsoft 365 s
 - Microsoft Graph for M365 data access
 - Smart Function Selection system
 - Cross-plugin workflow orchestration
+- Future-ready for Semantic Kernel Process Framework migration
 
 ## 🚀 Getting Started
 

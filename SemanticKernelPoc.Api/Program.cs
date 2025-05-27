@@ -37,8 +37,13 @@ builder.Services.AddSingleton<IConversationContextService, InMemoryConversationC
 // Add Smart Function Selector
 builder.Services.AddSingleton<ISmartFunctionSelector, SmartFunctionSelector>();
 
-// Add Workflow Orchestrator
+// Add Workflow Orchestrator (keeping for compatibility)
 builder.Services.AddSingleton<IWorkflowOrchestrator, WorkflowOrchestrator>();
+
+// Add Process Framework Orchestrator (experimental)
+builder.Services.AddSingleton<IProcessFrameworkOrchestrator, ProcessFrameworkOrchestrator>();
+
+
 
 // Add Graph Service for plugins
 builder.Services.AddSingleton<IGraphService, GraphService>();

@@ -263,20 +263,30 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
               <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
             </svg>
           </div>
-          <div>
-            <h3 
-              className="text-lg font-bold"
-              style={{ color: 'var(--text-primary)', fontWeight: '700' }}
-              title={`${data.Count} ${data.Count === 1 ? 'calendar event' : 'calendar events'} found`}
-            >
-              {data.Count === 1 ? 'Calendar Event' : `${data.Count} Events`}
-            </h3>
+          <div className="flex-1">
+            <div className="flex items-center space-x-2">
+              <h3 
+                className="text-lg font-bold"
+                style={{ color: 'var(--text-primary)', fontWeight: '700' }}
+                title={`${data.Count} ${data.Count === 1 ? 'calendar event' : 'calendar events'} found`}
+              >
+                {data.Count === 1 ? 'Calendar Event' : `${data.Count} Events`}
+              </h3>
+              {data.TimeRange === 'newly created event' && (
+                <span 
+                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"
+                  title="This event was just created"
+                >
+                  ✨ Just Created
+                </span>
+              )}
+            </div>
             <p 
               className="text-sm"
               style={{ color: 'var(--text-secondary)' }}
               title={`Time period: ${data.TimeRange} | User: ${data.UserName}`}
             >
-              {data.TimeRange} • {data.UserName}
+              {data.TimeRange === 'newly created event' ? 'Successfully created your new event!' : `${data.TimeRange} • ${data.UserName}`}
             </p>
           </div>
         </div>

@@ -469,15 +469,46 @@ Only propose tasks that are clearly actionable and mentioned in the meeting. If 
                 }
             }
 
-            var result = new
-            {
-                Type = "tasks_created",
-                TotalProposed = taskProposals.Length,
-                SuccessfullyCreated = createdTasks.Count(t => t.GetType().GetProperty("Status")?.GetValue(t)?.ToString() == "Created"),
-                Tasks = createdTasks
-            };
+            // Return successfully created tasks as NOTE_CARDS
+            var successfulTasks = createdTasks
+                .Where(t => t.GetType().GetProperty("Status")?.GetValue(t)?.ToString() == "Created")
+                .ToList();
 
-            return $"TASKS_CREATED: {JsonSerializer.Serialize(result)}";
+            if (successfulTasks.Any())
+            {
+                var noteCards = successfulTasks.Select(t => new
+                {
+                    id = t.GetType().GetProperty("Id")?.GetValue(t)?.ToString(),
+                    title = t.GetType().GetProperty("Title")?.GetValue(t)?.ToString(),
+                    content = ((TaskProposal)t.GetType().GetProperty("OriginalProposal")?.GetValue(t))?.Description ?? "",
+                    status = "NotStarted",
+                    priority = ((TaskProposal)t.GetType().GetProperty("OriginalProposal")?.GetValue(t))?.Priority ?? "Normal",
+                    dueDate = ((TaskProposal)t.GetType().GetProperty("OriginalProposal")?.GetValue(t))?.SuggestedDueDate,
+                    dueDateFormatted = !string.IsNullOrEmpty(((TaskProposal)t.GetType().GetProperty("OriginalProposal")?.GetValue(t))?.SuggestedDueDate) && 
+                                      DateTime.TryParse(((TaskProposal)t.GetType().GetProperty("OriginalProposal")?.GetValue(t))?.SuggestedDueDate, out var dueDate) ? 
+                                      dueDate.ToString("MMM dd, yyyy") : null,
+                    list = "Tasks",
+                    created = DateTime.Now.ToString("MMM dd, yyyy"),
+                    createdDateTime = DateTimeOffset.Now,
+                    isCompleted = false,
+                    webLink = $"https://to-do.office.com/tasks/id/{t.GetType().GetProperty("Id")?.GetValue(t)?.ToString()}/details",
+                    priorityColor = ((TaskProposal)t.GetType().GetProperty("OriginalProposal")?.GetValue(t))?.Priority?.ToLower() switch
+                    {
+                        "high" => "#ef4444",
+                        "low" => "#10b981", 
+                        _ => "#6b7280"
+                    },
+                    statusColor = "#3b82f6", // New task color
+                    isNewlyCreated = true // Flag to indicate these are newly created tasks
+                }).ToList();
+
+                return $"NOTE_CARDS: {JsonSerializer.Serialize(noteCards, new JsonSerializerOptions { WriteIndented = false })}";
+            }
+            else
+            {
+                var failedCount = createdTasks.Count(t => t.GetType().GetProperty("Status")?.GetValue(t)?.ToString() == "Failed");
+                return $"❌ Failed to create {failedCount} task{(failedCount != 1 ? "s" : "")}. Please check the task details and try again.";
+            }
         }
         catch (Exception ex)
         {
