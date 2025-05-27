@@ -4,6 +4,8 @@ using Microsoft.Identity.Web;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
+
+
 using SemanticKernelPoc.Api.Models;
 using SemanticKernelPoc.Api.Plugins.Calendar;
 using SemanticKernelPoc.Api.Plugins.SharePoint;
@@ -12,6 +14,7 @@ using SemanticKernelPoc.Api.Plugins.Mail;
 using SemanticKernelPoc.Api.Plugins.ToDo;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
+using SemanticKernelPoc.Api.Services;
 
 namespace SemanticKernelPoc.Api.Controllers;
 
@@ -40,8 +43,13 @@ public class ChatController : ControllerBase
     [HttpPost("send")]
     public async Task<ActionResult<ChatMessage>> SendMessage([FromBody] ChatMessage message)
     {
+        var requestStartTime = DateTime.UtcNow;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
         try
         {
+            _logger.LogInformation("⏱️ ChatController.SendMessage started at {StartTime}", requestStartTime);
+            
             var userId = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
             var userName = User.FindFirst("name")?.Value ?? User.FindFirst("preferred_username")?.Value;
             
@@ -57,93 +65,70 @@ public class ChatController : ControllerBase
             if (string.IsNullOrEmpty(message.SessionId))
                 message.SessionId = $"session_{userId}_{DateTime.UtcNow:yyyyMMdd}"; // Default session per user per day
             
+            _logger.LogInformation("⏱️ Message setup completed in {ElapsedMs}ms", stopwatch.ElapsedMilliseconds);
             _logger.LogInformation("Received chat message from user {UserId} ({UserName}) in session {SessionId}: {Content}", 
                 userId, userName, message.SessionId, message.Content);
 
             // Save user message to conversation memory
+            var memoryStartTime = stopwatch.ElapsedMilliseconds;
             await _conversationMemory.AddMessageAsync(message);
+            _logger.LogInformation("⏱️ Memory save completed in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - memoryStartTime, stopwatch.ElapsedMilliseconds);
 
-            // Get user's Microsoft Graph token for user-context operations
+            // Get user's original authentication token (with API audience) for MCP On-Behalf-Of flow
+            var tokenStartTime = stopwatch.ElapsedMilliseconds;
             string userAccessToken = null;
             try
             {
-                userAccessToken = await _tokenAcquisition.GetAccessTokenForUserAsync(
-                    scopes: new[] { "https://graph.microsoft.com/.default" },
-                    user: User);
-                _logger.LogInformation("Successfully acquired Microsoft Graph token for user {UserId}", userId);
+                // Get the original authentication token from the Authorization header
+                var authHeader = HttpContext.Request.Headers["Authorization"].ToString();
+                if (authHeader.StartsWith("Bearer "))
+                {
+                    userAccessToken = authHeader.Substring("Bearer ".Length);
+                    _logger.LogInformation("Successfully extracted user authentication token for user {UserId}", userId);
+                }
+                else
+                {
+                    _logger.LogWarning("No Bearer token found in Authorization header for user {UserId}", userId);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not acquire Microsoft Graph token for user {UserId}. Continuing without user context.", userId);
+                _logger.LogWarning(ex, "Could not extract user authentication token for user {UserId}. Continuing without user context.", userId);
             }
+            _logger.LogInformation("⏱️ Token extraction completed in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - tokenStartTime, stopwatch.ElapsedMilliseconds);
 
             // Create a user-context kernel with the user's token
+            var kernelStartTime = stopwatch.ElapsedMilliseconds;
             var userKernel = CreateUserContextKernel(userAccessToken, userId, userName);
+            _logger.LogInformation("⏱️ User kernel creation completed in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - kernelStartTime, stopwatch.ElapsedMilliseconds);
 
             // Get the chat completion service
             var chatCompletionService = userKernel.GetRequiredService<IChatCompletionService>();
             
             // Load conversation history and create chat history
+            var historyStartTime = stopwatch.ElapsedMilliseconds;
             var conversationHistory = await _conversationMemory.GetConversationHistoryAsync(message.SessionId, maxMessages: 20);
+            _logger.LogInformation("⏱️ Conversation history loaded in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - historyStartTime, stopwatch.ElapsedMilliseconds);
+            
+            var chatHistoryStartTime = stopwatch.ElapsedMilliseconds;
             var chatHistory = new ChatHistory();
             
             // Add system message
             chatHistory.AddSystemMessage(
-                $"You are a helpful AI assistant for {userName ?? "the user"}. " +
-                "You have access to Microsoft Graph and can help with comprehensive productivity tasks across Microsoft 365. " +
-                "When the user asks for information or actions related to their Microsoft 365 data, you can access it using their authenticated context. " +
+                $"You are an AI assistant for {userName ?? "the user"}. " +
+                "You have access to Microsoft Graph for productivity tasks. " +
                 
-                "🚨 CRITICAL FUNCTION CALLING RULES:\n" +
-                "1. When user asks for 'today' or 'today's events' → call GetTodaysEvents()\n" +
-                "2. When user asks for 'next appointment', 'next event', 'my next appointment', 'when is my next appointment' → call GetNextAppointment()\n" +
-                "3. When user asks for 'this month' → call GetEventCount(timePeriod='this_month', includeDetails=true)\n" +
-                "4. When user asks for 'upcoming this month' or 'upcoming events this month' → call GetEventCount(timePeriod='this_month_upcoming', includeDetails=true)\n" +
-                "5. When user asks for 'this week' → call GetEventCount(timePeriod='this_week', includeDetails=true)\n" +
-                "6. When user asks for 'upcoming this week' or 'upcoming events this week' → call GetEventCount(timePeriod='this_week_upcoming', includeDetails=true)\n" +
-                "7. When user asks for 'upcoming' or 'appointments' (general) → call GetUpcomingEvents()\n" +
-                "8. When user asks for 'notes', 'my notes', 'show notes' → call GetRecentNotes()\n" +
-                "9. When functions return 'CALENDAR_CARDS:' or 'NOTE_CARDS:' → return ONLY that exact response, no additional text\n" +
-                "10. NEVER provide manual responses for calendar or note data - ALWAYS use functions first\n" +
+                "FUNCTION RULES:\n" +
+                "• For 'tasks', 'my tasks', 'todos' → call GetRecentNotes()\n" +
+                "• For 'today' events → call GetTodaysEvents()\n" +
+                "• For 'upcoming' events → call GetUpcomingEvents()\n" +
+                "• When functions return 'CALENDAR_CARDS:' or 'TASK_CARDS:' → return ONLY that exact response\n" +
                 
-                "🎯 CONVERSATIONAL APPROACH:\n" +
-                "• ALWAYS use a step-by-step conversational approach when information is missing\n" +
-                "• Ask for ONE piece of missing information at a time\n" +
-                "• Only call functions when you have ALL required parameters\n" +
-                "• Be conversational and friendly in your requests for information\n" +
-                "• Remember previous answers in the conversation to avoid re-asking\n" +
-                
-                "🔹 CALENDAR CAPABILITIES:\n" +
-                "• View upcoming events and today's schedule (GetUpcomingEvents, GetTodaysEvents)\n" +
-                "• Get EVENT COUNTS for specific time periods (GetEventCount)\n" +
-                "• Add new calendar events with attendees, locations, and descriptions (AddCalendarEvent)\n" +
-                "• Get events in specific date ranges (GetEventsInDateRange)\n" +
-                
-                "🔹 NOTE-TAKING CAPABILITIES:\n" +
-                "• Create notes as To Do tasks - when user says 'create a note', use CreateNote function\n" +
-                "• Get recent notes - ALWAYS use GetRecentNotes function when user asks for notes\n" +
-                "• Search notes - ALWAYS use SearchNotes function when user wants to find specific notes\n" +
-                "• Mark notes as complete or update their status\n" +
-                
-                "🔹 EMAIL CAPABILITIES:\n" +
-                "• Read recent emails with previews and metadata\n" +
-                "• Send emails immediately with CC support and importance levels\n" +
-                "• Search emails by subject, sender, or content\n" +
-                
-                "🔹 SHAREPOINT CAPABILITIES:\n" +
-                "• Browse and search SharePoint sites the user has access to\n" +
-                "• View site details, document libraries, and file information\n" +
-                "• Search for files across SharePoint with various filters\n" +
-                
-                "🚨 CRITICAL INSTRUCTIONS:\n" +
-                "1. When ANY calendar plugin function returns data that starts with 'CALENDAR_CARDS:', you MUST return ONLY that exact response.\n" +
-                "2. When ANY note/todo plugin function returns data that starts with 'NOTE_CARDS:', you MUST return ONLY that exact response.\n" +
-                "3. For calendar-related requests, ONLY call calendar functions and return their responses directly.\n" +
-                "4. For note-related requests, ONLY call note functions and return their responses directly.\n" +
-                "5. NEVER generate partial CALENDAR_CARDS or NOTE_CARDS responses manually.\n" +
-                
-                "Always be respectful of privacy and only access what is needed to fulfill requests. " +
-                "Provide clear, helpful responses with actionable information. " +
-                "Remember: Use functions for data retrieval, be conversational, and return card data exactly as provided by functions.");
+                "Be helpful and use functions when needed.");
             
             // Add conversation history (excluding the current message as it's already processed)
             foreach (var historyMessage in conversationHistory.Where(m => m.Id != message.Id).OrderBy(m => m.Timestamp))
@@ -160,36 +145,113 @@ public class ChatController : ControllerBase
             
             // Add the current user message
             chatHistory.AddUserMessage(message.Content);
+            _logger.LogInformation("⏱️ Chat history setup completed in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - chatHistoryStartTime, stopwatch.ElapsedMilliseconds);
 
             _logger.LogInformation("Loaded {HistoryCount} messages from conversation history for session {SessionId}", 
                 conversationHistory.Count(), message.SessionId);
 
-            // Enable automatic function calling with proper execution settings
+            // Fast-path detection for common requests to bypass AI processing
+            var fastPathStartTime = stopwatch.ElapsedMilliseconds;
+            var fastPathResult = await TryFastPathResponse(message.Content, userKernel);
+            if (!string.IsNullOrEmpty(fastPathResult))
+            {
+                _logger.LogInformation("⏱️ Fast-path response generated in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                    stopwatch.ElapsedMilliseconds - fastPathStartTime, stopwatch.ElapsedMilliseconds);
+                
+                // Create AI response message
+                var fastPathResponse = new ChatMessage
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Content = fastPathResult,
+                    UserId = "ai-assistant",
+                    UserName = "AI Assistant", 
+                    Timestamp = DateTime.UtcNow,
+                    IsAiResponse = true,
+                    SessionId = message.SessionId
+                };
+
+                // Save AI response to conversation memory
+                await _conversationMemory.AddMessageAsync(fastPathResponse);
+                _logger.LogInformation("⏱️ TOTAL REQUEST TIME (Fast-path): {TotalMs}ms", stopwatch.ElapsedMilliseconds);
+                return Ok(fastPathResponse);
+            }
+            _logger.LogInformation("⏱️ Fast-path detection completed in {ElapsedMs}ms - no match, proceeding with AI (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - fastPathStartTime, stopwatch.ElapsedMilliseconds);
+
+            // Enable automatic function calling with optimized execution settings
             var executionSettings = new OpenAIPromptExecutionSettings()
             {
                 ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
-                MaxTokens = 4000,
-                Temperature = 0.1
+                MaxTokens = 1000, // Reduced for faster responses
+                Temperature = 0.0, // More deterministic for card responses
+                TopP = 0.1 // More focused responses
             };
 
             // Get the AI response with automatic function calling enabled
+            _logger.LogInformation("⏱️ Starting AI chat completion at {TotalMs}ms", stopwatch.ElapsedMilliseconds);
+            var aiStartTime = stopwatch.ElapsedMilliseconds;
+            
             var response = await chatCompletionService.GetChatMessageContentAsync(
                 chatHistory, 
                 executionSettings, 
                 userKernel);
 
-            _logger.LogInformation("Raw AI response content: {Content}", response.Content);
+            _logger.LogInformation("⏱️ AI chat completion finished in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - aiStartTime, stopwatch.ElapsedMilliseconds);
 
-            // Use the response content as-is - the plugins already return properly formatted card data
+            _logger.LogInformation("Raw AI response content: {Content}", response.Content);
+            
+            // Log function calls if any were made
+            if (response.Metadata?.ContainsKey("FunctionCalls") == true)
+            {
+                _logger.LogInformation("Function calls were made during this request");
+            }
+            
+            // Log if the response contains function results
+            var responseProcessingStartTime = stopwatch.ElapsedMilliseconds;
+            foreach (var item in response.Items)
+            {
+                _logger.LogInformation("Response item type: {ItemType}, Content: {Content}", 
+                    item.GetType().Name, item.ToString());
+                
+
+            }
+
+            // Check if any function returned card data and use it directly
             string finalContent = response.Content ?? "I'm sorry, I couldn't generate a response.";
             
+            // Check function results for card data and override AI response if found
+            foreach (var item in response.Items)
+            {
+                var itemType = item.GetType().Name;
+                if (itemType == "FunctionResultContent")
+                {
+                    // Use reflection to get the Result property
+                    var resultProperty = item.GetType().GetProperty("Result");
+                    if (resultProperty != null)
+                    {
+                        var resultString = resultProperty.GetValue(item)?.ToString() ?? "";
+                        if (resultString.StartsWith("TASK_CARDS:") || resultString.StartsWith("CALENDAR_CARDS:"))
+                        {
+                            _logger.LogInformation("Found card data in function result, using it directly instead of AI interpretation");
+                            finalContent = resultString;
+                            break; // Use the first card data found
+                        }
+                    }
+                }
+            }
+            
             // Log if we detect card data (for debugging)
-            if (finalContent.Contains("CALENDAR_CARDS:") || finalContent.Contains("NOTE_CARDS:"))
+            if (finalContent.Contains("CALENDAR_CARDS:") || finalContent.Contains("TASK_CARDS:"))
             {
                 _logger.LogInformation("Response contains card data, passing through as-is");
             }
+            _logger.LogInformation("⏱️ Response processing completed in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - responseProcessingStartTime, stopwatch.ElapsedMilliseconds);
 
             // Create AI response message
+            var messageCreationStartTime = stopwatch.ElapsedMilliseconds;
             var aiResponse = new ChatMessage
             {
                 Id = Guid.NewGuid().ToString(),
@@ -203,8 +265,11 @@ public class ChatController : ControllerBase
 
             // Save AI response to conversation memory
             await _conversationMemory.AddMessageAsync(aiResponse);
+            _logger.LogInformation("⏱️ AI response creation and save completed in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - messageCreationStartTime, stopwatch.ElapsedMilliseconds);
 
             _logger.LogInformation("Generated and saved AI response for user {UserId} in session {SessionId}", userId, message.SessionId);
+            _logger.LogInformation("⏱️ TOTAL REQUEST TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
 
             return Ok(aiResponse);
         }
@@ -212,10 +277,56 @@ public class ChatController : ControllerBase
         {
             _logger.LogError(ex, "Error processing chat message from user {UserId}", message.UserId);
             
+            string errorMessage = "I'm experiencing technical difficulties. Please try again later.";
+            
+            // Provide specific error messages for common issues
+            if (ex.Message.Contains("invalid_api_key") || ex.Message.Contains("Incorrect API key"))
+            {
+                errorMessage = "🔑 **OpenAI API Configuration Error**\n\n" +
+                              "The OpenAI API key is missing or invalid. Please check the server configuration.\n\n" +
+                              "**For Administrators:**\n" +
+                              "• Verify the OpenAI API key in `appsettings.Development.json`\n" +
+                              "• Ensure the key starts with `sk-` and is valid\n" +
+                              "• Check your OpenAI account has sufficient credits\n\n" +
+                              "**Error Details:** Invalid or missing OpenAI API key";
+            }
+            else if (ex.Message.Contains("insufficient_quota") || ex.Message.Contains("quota"))
+            {
+                errorMessage = "💳 **OpenAI Quota Exceeded**\n\n" +
+                              "The OpenAI API quota has been exceeded. Please check your OpenAI account.\n\n" +
+                              "**For Administrators:**\n" +
+                              "• Check your OpenAI account billing and usage\n" +
+                              "• Add credits to your OpenAI account\n" +
+                              "• Verify your usage limits\n\n" +
+                              "**Error Details:** OpenAI API quota exceeded";
+            }
+            else if (ex.Message.Contains("rate_limit") || ex.Message.Contains("Rate limit"))
+            {
+                errorMessage = "⏱️ **Rate Limit Exceeded**\n\n" +
+                              "Too many requests to OpenAI API. Please wait a moment and try again.\n\n" +
+                              "**Error Details:** OpenAI API rate limit exceeded";
+            }
+            else if (ex.Message.Contains("model_not_found") || ex.Message.Contains("model"))
+            {
+                errorMessage = "🤖 **Model Configuration Error**\n\n" +
+                              "The specified OpenAI model is not available or not found.\n\n" +
+                              "**For Administrators:**\n" +
+                              "• Check the `DeploymentOrModelId` in configuration\n" +
+                              "• Verify the model name is correct (e.g., 'gpt-4o-mini')\n" +
+                              "• Ensure your OpenAI account has access to this model\n\n" +
+                              "**Error Details:** OpenAI model not found or unavailable";
+            }
+            else if (ex.Message.Contains("network") || ex.Message.Contains("timeout"))
+            {
+                errorMessage = "🌐 **Network Connection Error**\n\n" +
+                              "Unable to connect to OpenAI services. Please check your internet connection.\n\n" +
+                              "**Error Details:** Network timeout or connection error";
+            }
+            
             return StatusCode(500, new ChatMessage
             {
                 Id = Guid.NewGuid().ToString(),
-                Content = "I'm experiencing technical difficulties. Please try again later.",
+                Content = errorMessage,
                 UserId = "ai-assistant",
                 UserName = "AI Assistant",
                 Timestamp = DateTime.UtcNow,
@@ -258,12 +369,18 @@ public class ChatController : ControllerBase
             var calendarPlugin = new CalendarPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<CalendarPlugin>>());
             var todoPlugin = new ToDoPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<ToDoPlugin>>());
             
-            kernelBuilder.Plugins.AddFromObject(new SharePointPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<SharePointPlugin>>()));
+            // Add Microsoft Graph plugins
             kernelBuilder.Plugins.AddFromObject(new OneDrivePlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<OneDrivePlugin>>()));
             kernelBuilder.Plugins.AddFromObject(calendarPlugin);
             kernelBuilder.Plugins.AddFromObject(new MailPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<MailPlugin>>()));
             kernelBuilder.Plugins.AddFromObject(todoPlugin);
-            _logger.LogInformation("Added SharePoint, OneDrive, Calendar, Mail, and ToDo plugins for user {UserId}", userId);
+            
+            // Add SharePoint MCP plugin (temporary approach until official SK MCP connectors are available for C#)
+            var mcpClientService = HttpContext.RequestServices.GetRequiredService<IMcpClientService>();
+            var sharePointPlugin = new SharePointMcpPlugin(mcpClientService, HttpContext.RequestServices.GetRequiredService<ILogger<SharePointMcpPlugin>>());
+            kernelBuilder.Plugins.AddFromObject(sharePointPlugin);
+            
+            _logger.LogInformation("Added OneDrive, Calendar, Mail, ToDo, and SharePoint MCP plugins for user {UserId}.", userId);
         }
 
         var kernel = kernelBuilder.Build();
@@ -282,6 +399,134 @@ public class ChatController : ControllerBase
         }
 
         return kernel;
+    }
+
+    private async Task<string> TryFastPathResponse(string userMessage, Kernel kernel)
+    {
+        var messageLower = userMessage.ToLower().Trim();
+        _logger.LogInformation("🚀 Fast-path detection for message: '{Message}'", userMessage);
+        
+        // Email/Mail fast-path (check this FIRST)
+        if (messageLower.Contains("mail") || messageLower.Contains("email") || 
+            messageLower.Contains("inbox") || messageLower.Contains("message"))
+        {
+            _logger.LogInformation("📧 Fast-path: Detected EMAIL request");
+            try
+            {
+                var mailPlugin = kernel.Plugins.FirstOrDefault(p => p.Name == "MailPlugin");
+                if (mailPlugin != null)
+                {
+                    var getRecentEmailsFunction = mailPlugin.FirstOrDefault(f => f.Name == "GetRecentEmails");
+                    if (getRecentEmailsFunction != null)
+                    {
+                        _logger.LogInformation("📧 Fast-path: Calling GetRecentEmails");
+                        var result = await kernel.InvokeAsync(getRecentEmailsFunction);
+                        return result.ToString();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Fast-path email function call failed, will fall back to AI");
+                return null; // Fall back to AI processing
+            }
+        }
+        
+        // Calendar/Appointments fast-path (check this SECOND to avoid conflicts)
+        if (messageLower.Contains("appointment") || messageLower.Contains("calendar") || 
+            messageLower.Contains("meeting") || messageLower.Contains("event") ||
+            messageLower.Contains("future") || messageLower.Contains("upcoming") ||
+            (messageLower.Contains("today") && (messageLower.Contains("schedule") || messageLower.Contains("event"))) ||
+            (messageLower.Contains("others") && messageLower.Contains("future")) ||
+            (messageLower.Contains("any") && (messageLower.Contains("appointment") || messageLower.Contains("meeting") || messageLower.Contains("event"))))
+        {
+            _logger.LogInformation("🗓️ Fast-path: Detected CALENDAR request");
+            try
+            {
+                var calendarPlugin = kernel.Plugins.FirstOrDefault(p => p.Name == "CalendarPlugin");
+                if (calendarPlugin != null)
+                {
+                    // Determine which calendar function to call
+                    if (messageLower.Contains("today"))
+                    {
+                        _logger.LogInformation("🗓️ Fast-path: Calling GetTodaysEvents");
+                        var getTodaysEventsFunction = calendarPlugin.FirstOrDefault(f => f.Name == "GetTodaysEvents");
+                        if (getTodaysEventsFunction != null)
+                        {
+                            var result = await kernel.InvokeAsync(getTodaysEventsFunction);
+                            return result.ToString();
+                        }
+                    }
+                    else if (messageLower.Contains("upcoming") || messageLower.Contains("future") || 
+                             (messageLower.Contains("others") && messageLower.Contains("future")))
+                    {
+                        _logger.LogInformation("🗓️ Fast-path: Calling GetUpcomingEvents (upcoming/future)");
+                        var getUpcomingEventsFunction = calendarPlugin.FirstOrDefault(f => f.Name == "GetUpcomingEvents");
+                        if (getUpcomingEventsFunction != null)
+                        {
+                            // For "future" requests, look ahead more days (30 instead of default 7)
+                            var arguments = new KernelArguments
+                            {
+                                ["days"] = 30,
+                                ["maxEvents"] = 20
+                            };
+                            var result = await kernel.InvokeAsync(getUpcomingEventsFunction, arguments);
+                            return result.ToString();
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogInformation("🗓️ Fast-path: Calling GetUpcomingEvents (default)");
+                        // Default to upcoming events for general appointment requests
+                        var getUpcomingEventsFunction = calendarPlugin.FirstOrDefault(f => f.Name == "GetUpcomingEvents");
+                        if (getUpcomingEventsFunction != null)
+                        {
+                            var result = await kernel.InvokeAsync(getUpcomingEventsFunction);
+                            return result.ToString();
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Fast-path calendar function call failed, will fall back to AI");
+                return null; // Fall back to AI processing
+            }
+        }
+        
+        // Tasks/Notes fast-path (check LAST to avoid conflicts with email/calendar)
+        if ((messageLower.Contains("task") || messageLower.Contains("todo") || messageLower.Contains("todos") ||
+            (messageLower.Contains("my tasks")) || 
+            (messageLower.Contains("show me my") && (messageLower.Contains("task") || messageLower.Contains("todo")))) &&
+            !messageLower.Contains("appointment") && !messageLower.Contains("calendar") && 
+            !messageLower.Contains("meeting") && !messageLower.Contains("event") &&
+            !messageLower.Contains("mail") && !messageLower.Contains("email") && 
+            !messageLower.Contains("inbox") && !messageLower.Contains("message"))
+        {
+            _logger.LogInformation("📝 Fast-path: Detected TASKS/TODOS request");
+            try
+            {
+                var todoPlugin = kernel.Plugins.FirstOrDefault(p => p.Name == "ToDoPlugin");
+                if (todoPlugin != null)
+                {
+                    var getRecentNotesFunction = todoPlugin.FirstOrDefault(f => f.Name == "GetRecentNotes");
+                    if (getRecentNotesFunction != null)
+                    {
+                        _logger.LogInformation("📝 Fast-path: Calling GetRecentNotes");
+                        var result = await kernel.InvokeAsync(getRecentNotesFunction);
+                        return result.ToString();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Fast-path task function call failed, will fall back to AI");
+                return null; // Fall back to AI processing
+            }
+        }
+        
+        _logger.LogInformation("🤖 Fast-path: No match found, will use AI processing");
+        return null; // No fast-path match, use AI processing
     }
 
     [HttpGet("sessions")]

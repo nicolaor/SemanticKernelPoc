@@ -44,22 +44,24 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({ content, isAiResponse
     }
   }
 
-  // Check if content contains note card data and it's an AI response
-  if (content.startsWith('NOTE_CARDS:') && isAiResponse) {
+  // Check if content contains task card data and it's an AI response
+  if (content.startsWith('TASK_CARDS:') && isAiResponse) {
     try {
-      const jsonData = content.replace('NOTE_CARDS:', '');
-      const noteData = JSON.parse(jsonData);
+      const jsonData = content.replace('TASK_CARDS:', '');
+      const taskData = JSON.parse(jsonData);
       
-      // Validate that it's an array of notes
-      if (Array.isArray(noteData)) {
+      // Validate that it's an array of tasks
+      if (Array.isArray(taskData)) {
         return (
           <div className="space-y-4">
-            <NoteCard notes={noteData} />
+            <NoteCard notes={taskData} />
           </div>
         );
+      } else {
+        console.warn('Task data is not an array:', taskData);
       }
     } catch (error) {
-      console.error('Failed to parse note data:', error);
+      console.error('Failed to parse task data:', error);
       // Fall back to regular text rendering
     }
   }

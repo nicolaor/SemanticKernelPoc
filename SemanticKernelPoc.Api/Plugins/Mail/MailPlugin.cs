@@ -28,7 +28,7 @@ public class MailPlugin : BaseGraphPlugin
                 return "Unable to access emails - user authentication required.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
             // Use simplified Messages API
             var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
@@ -79,7 +79,7 @@ public class MailPlugin : BaseGraphPlugin
                 return "Unable to create email - user authentication required.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
             var message = new Message
             {
@@ -159,7 +159,7 @@ public class MailPlugin : BaseGraphPlugin
                 return "Email body cannot be empty. Please provide content for the email.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
             // First, test if we can access the mail service
             try
@@ -198,19 +198,18 @@ public class MailPlugin : BaseGraphPlugin
                 var ccAddresses = ccEmails.Split(',', StringSplitOptions.RemoveEmptyEntries)
                     .Select(email => email.Trim())
                     .Where(email => IsValidEmail(email))
-                    .ToList();
+                    .Select(email => new Recipient
+                    {
+                        EmailAddress = new EmailAddress
+                        {
+                            Address = email,
+                            Name = email
+                        }
+                    }).ToList();
 
                 if (ccAddresses.Any())
                 {
-                    var ccList = ccAddresses.Select(email => new Recipient
-                    {
-                        EmailAddress = new EmailAddress { Address = email, Name = email }
-                    }).ToList();
-                    message.CcRecipients = ccList;
-                }
-                else
-                {
-                    return $"Invalid CC email addresses provided: '{ccEmails}'. Please check the format.";
+                    message.CcRecipients = ccAddresses;
                 }
             }
 
@@ -222,62 +221,40 @@ public class MailPlugin : BaseGraphPlugin
                 _ => Microsoft.Graph.Models.Importance.Normal
             };
 
-            // Try to send the email using SendMail API
-            try
+            // Send the email using the sendMail endpoint
+            var sendMailRequest = new Microsoft.Graph.Me.SendMail.SendMailPostRequestBody
             {
-                var sendMailRequest = new Microsoft.Graph.Me.SendMail.SendMailPostRequestBody
-                {
-                    Message = message,
-                    SaveToSentItems = true
-                };
+                Message = message,
+                SaveToSentItems = true
+            };
 
-                await graphClient.Me.SendMail.PostAsync(sendMailRequest);
+            await graphClient.Me.SendMail.PostAsync(sendMailRequest);
 
-                // Verify the email was sent by checking sent items (optional verification)
-                var sentVerification = await VerifyEmailSent(graphClient, subject, toEmail);
-
-                return $"✅ Email sent successfully from {userName}!\n" +
-                       $"📧 To: {toEmail}\n" +
-                       $"📋 Subject: {subject}\n" +
-                       $"⚡ Importance: {importance}" +
-                       (ccEmails != null ? $"\n📌 CC: {ccEmails}" : "") +
-                       $"\n📅 Sent at: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n" +
-                       $"✉️ Saved to Sent Items: Yes\n" +
-                       (sentVerification ? "🔍 Verification: Email found in sent items" : "⚠️ Verification: Could not verify in sent items (this is normal for immediate sending)");
-            }
-            catch (Microsoft.Graph.Models.ODataErrors.ODataError odataEx)
+            // Verify the email was sent by checking sent items
+            var wasSent = await VerifyEmailSent(graphClient, subject, toEmail);
+            
+            var result = $"✅ Email sent successfully for {userName}!\n" +
+                        $"📧 To: {toEmail}\n" +
+                        $"📝 Subject: {subject}\n" +
+                        $"🔗 Importance: {importance}\n";
+            
+            if (!string.IsNullOrWhiteSpace(ccEmails))
             {
-                return $"❌ Microsoft Graph API Error sending email:\n" +
-                       $"Error Code: {odataEx.Error?.Code}\n" +
-                       $"Error Message: {odataEx.Error?.Message}\n" +
-                       $"This might indicate:\n" +
-                       $"• Missing Mail.Send permission\n" +
-                       $"• Invalid email address format\n" +
-                       $"• Mailbox access restrictions\n" +
-                       $"• Organization email policies blocking external sends";
+                result += $"📋 CC: {ccEmails}\n";
             }
-            catch (Exception sendEx)
-            {
-                return $"❌ Error sending email: {sendEx.Message}\n" +
-                       $"This could be due to:\n" +
-                       $"• Network connectivity issues\n" +
-                       $"• Microsoft Graph service unavailability\n" +
-                       $"• Authentication token expiration\n" +
-                       $"• Email size or content restrictions";
-            }
+            
+            result += wasSent ? "✅ Verified: Email appears in Sent Items" : "⚠️ Note: Could not verify delivery (check Sent Items manually)";
+            
+            return result;
         }
         catch (Exception ex)
         {
-            return $"❌ Unexpected error sending email: {ex.Message}\n" +
-                   $"Please check your authentication and try again.";
+            return $"❌ Error sending email: {ex.Message}";
         }
     }
 
     private bool IsValidEmail(string email)
     {
-        if (string.IsNullOrWhiteSpace(email))
-            return false;
-
         try
         {
             var addr = new System.Net.Mail.MailAddress(email);
@@ -293,21 +270,20 @@ public class MailPlugin : BaseGraphPlugin
     {
         try
         {
-            // Check sent items for the email (this might not work immediately due to Exchange sync delays)
             var sentItems = await graphClient.Me.MailFolders["SentItems"].Messages.GetAsync(requestConfig =>
             {
-                requestConfig.QueryParameters.Filter = $"contains(subject,'{subject}')";
-                requestConfig.QueryParameters.Top = 5;
-                requestConfig.QueryParameters.Select = new[] { "subject", "toRecipients", "sentDateTime" };
+                requestConfig.QueryParameters.Top = 10;
+                requestConfig.QueryParameters.Orderby = new[] { "sentDateTime desc" };
+                requestConfig.QueryParameters.Filter = $"subject eq '{subject.Replace("'", "''")}'";
             });
 
             return sentItems?.Value?.Any(msg => 
-                msg.ToRecipients?.Any(r => r.EmailAddress?.Address?.Equals(toEmail, StringComparison.OrdinalIgnoreCase) == true) == true) == true;
+                msg.ToRecipients?.Any(recipient => 
+                    recipient.EmailAddress?.Address?.Equals(toEmail, StringComparison.OrdinalIgnoreCase) == true) == true) == true;
         }
         catch
         {
-            // Verification failed, but this doesn't mean the email wasn't sent
-            return false;
+            return false; // If we can't verify, assume it worked
         }
     }
 
@@ -328,17 +304,18 @@ public class MailPlugin : BaseGraphPlugin
 
             if (string.IsNullOrWhiteSpace(searchQuery))
             {
-                return "Please provide a search query.";
+                return "Please provide a search query to find emails.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
-            // Use basic filter approach
+            // Search using the search API
             var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
             {
-                requestConfig.QueryParameters.Filter = $"contains(subject,'{searchQuery}') or contains(from/emailAddress/name,'{searchQuery}')";
+                requestConfig.QueryParameters.Search = $"\"{searchQuery}\"";
                 requestConfig.QueryParameters.Top = Math.Min(maxResults, 10);
-                requestConfig.QueryParameters.Select = new[] { "subject", "from", "receivedDateTime", "isRead", "bodyPreview" };
+                requestConfig.QueryParameters.Orderby = new[] { "receivedDateTime desc" };
+                requestConfig.QueryParameters.Select = new[] { "subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview" };
             });
 
             if (messages?.Value?.Any() == true)
@@ -349,10 +326,12 @@ public class MailPlugin : BaseGraphPlugin
                     From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
                     ReceivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
                     IsRead = msg.IsRead ?? false,
-                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview.Substring(0, 100) + "..." : msg.BodyPreview
+                    Importance = msg.Importance?.ToString() ?? "Normal",
+                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview.Substring(0, 100) + "..." : msg.BodyPreview,
+                    MatchReason = "Content or Subject"
                 });
 
-                return $"Search results for '{searchQuery}' in {userName}'s emails:\n" +
+                return $"Email search results for '{searchQuery}' (found {emailList.Count()} matches for {userName}):\n" +
                        JsonSerializer.Serialize(emailList, new JsonSerializerOptions { WriteIndented = true });
             }
 
@@ -377,7 +356,7 @@ public class MailPlugin : BaseGraphPlugin
                 return "Unable to get email statistics - user authentication required.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
             // Get unread count from messages
             var unreadMessages = await graphClient.Me.Messages.GetAsync(requestConfig =>
@@ -423,7 +402,7 @@ public class MailPlugin : BaseGraphPlugin
                 return "Unable to check email permissions - user authentication required.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
             var results = new List<string>();
 
@@ -547,6 +526,12 @@ public class MailPlugin : BaseGraphPlugin
         {
             return $"Error checking email permissions: {ex.Message}";
         }
+    }
+
+    private async Task<GraphServiceClient> CreateClientAsync(string userAccessToken)
+    {
+        // Use the injected GraphService to create client with On-Behalf-Of flow
+        return await _graphService.CreateClientAsync(userAccessToken);
     }
 
     private GraphServiceClient CreateGraphClient(string userAccessToken)

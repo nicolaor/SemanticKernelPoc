@@ -45,49 +45,46 @@ function App() {
     }
   }, [isLoading, userProfile]);
 
-  // Handle redirect responses and initialize MSAL
+  // Handle MSAL redirect response
   useEffect(() => {
-    const initializeMsal = async () => {
+    const handleRedirectResponse = async () => {
       try {
-        console.log("Initializing MSAL...");
-        
-        // Initialize MSAL first
-        await instance.initialize();
-        console.log("MSAL initialized successfully");
-        
-        // Then handle any redirect responses
-        const response = await instance.handleRedirectPromise();
-        if (response) {
-          console.log("Redirect response received:", response);
+        // Only handle redirect if MSAL is properly initialized
+        if (instance && typeof instance.handleRedirectPromise === 'function') {
+          const response = await instance.handleRedirectPromise();
+          if (response) {
+            console.log("Authentication successful");
+          }
         }
       } catch (error) {
-        console.error("MSAL initialization error:", error);
+        console.error("MSAL redirect handling error:", error);
       }
     };
 
-    initializeMsal();
+    handleRedirectResponse();
   }, [instance]);
 
-  const handleLogin = () => {
-    console.log("Attempting login...");
-    instance.loginPopup(loginRequest)
-      .then((response) => {
-        console.log("Login successful:", response);
-      })
-      .catch(error => {
-        console.error("Popup login failed:", error);
-        
-        // Fallback to redirect if popup fails
-        if (error.errorMessage && error.errorMessage.includes("popup")) {
-          console.log("Falling back to redirect login...");
-          instance.loginRedirect(loginRequest);
-        }
-      });
+  const handleLogin = async () => {
+    try {
+      const response = await instance.loginPopup(loginRequest);
+      console.log("Login successful");
+    } catch (error) {
+      console.error("Login failed:", error);
+      // Fallback to redirect login
+      try {
+        await instance.loginRedirect(loginRequest);
+      } catch (redirectError) {
+        console.error("Redirect login also failed:", redirectError);
+      }
+    }
   };
 
-  const handleRedirectLogin = () => {
-    console.log("Attempting redirect login...");
-    instance.loginRedirect(loginRequest);
+  const handleRedirectLogin = async () => {
+    try {
+      await instance.loginRedirect(loginRequest);
+    } catch (error) {
+      console.error("Redirect login failed:", error);
+    }
   };
 
   const handleLogout = () => {
@@ -98,6 +95,8 @@ function App() {
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !userProfile || isLoading) return;
+    
+    console.log(`Sending message: "${newMessage}"`);
     
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
@@ -134,6 +133,7 @@ function App() {
       
       // Add AI response to messages
       setMessages((prev) => [...prev, aiResponse]);
+      
     } catch (error) {
       console.error("Failed to send message:", error);
       
@@ -240,56 +240,15 @@ function App() {
                 </button>
               </AuthenticatedTemplate>
               <UnauthenticatedTemplate>
-                <div className="text-center py-16">
-                  <div 
-                    className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"
-                    style={{ background: 'var(--accent-primary)' }}
-                  >
-                    <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7z" />
-                    </svg>
-                  </div>
-                  <h2 
-                    className="text-3xl font-bold mb-4"
-                    style={{ color: 'var(--text-primary)' }}
-                  >
-                    Welcome to Semantic Kernel Chat
-                  </h2>
-                  <p 
-                    className="text-lg mb-8 max-w-md mx-auto"
-                    style={{ color: 'var(--text-secondary)' }}
-                  >
-                    Sign in with your Azure AD account to start chatting with your AI assistant.
-                  </p>
-                  <div className="space-y-4">
-                    <button
-                      onClick={handleLogin}
-                      className="px-8 py-3 text-lg font-semibold rounded-xl text-white shadow-xl hover:shadow-2xl transition-all duration-200"
-                      style={{ background: 'var(--accent-primary)' }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-secondary)'}
-                      onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent-primary)'}
-                    >
-                      Sign In (Popup)
-                    </button>
-                    <div>
-                      <button
-                        onClick={handleRedirectLogin}
-                        className="px-6 py-2 text-sm font-semibold rounded-lg text-white shadow-lg hover:shadow-xl transition-all duration-200"
-                        style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = 'var(--border-primary)'}
-                        onMouseLeave={(e) => e.currentTarget.style.background = 'var(--bg-tertiary)'}
-                      >
-                        Try Redirect Login
-                      </button>
-                      <p 
-                        className="text-sm mt-2"
-                        style={{ color: 'var(--text-tertiary)' }}
-                      >
-                        Use this if popup is blocked or not working
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                <button
+                  onClick={handleLogin}
+                  className="px-6 py-2 text-sm font-semibold rounded-lg text-white shadow-lg hover:shadow-xl transition-all duration-200"
+                  style={{ background: 'var(--accent-primary)' }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-secondary)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent-primary)'}
+                >
+                  Sign In
+                </button>
               </UnauthenticatedTemplate>
             </div>
           </div>
@@ -297,6 +256,32 @@ function App() {
       </nav>
 
       <main className="flex-1 flex flex-col items-center py-4 px-4 overflow-hidden">
+        <UnauthenticatedTemplate>
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center max-w-md">
+              <div 
+                className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"
+                style={{ background: 'var(--accent-primary)' }}
+              >
+                <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7z" />
+                </svg>
+              </div>
+              <h2 
+                className="text-3xl font-bold mb-4"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Welcome to Semantic Kernel Chat
+              </h2>
+              <p 
+                className="text-lg mb-8"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                Sign in with your Azure AD account to start chatting with your AI assistant.
+              </p>
+            </div>
+          </div>
+        </UnauthenticatedTemplate>
         <AuthenticatedTemplate>
           {/* API Connection Error Banner */}
           {isApiConnectionError && profileError && (

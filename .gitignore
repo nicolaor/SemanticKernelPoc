@@ -41,6 +41,11 @@ azure.json
 apikeys.txt
 tokens.txt
 
+# Exception: Include development HTTPS certificates
+!certs/localhost.key
+!certs/localhost.crt
+!certs/localhost.pfx
+
 # IDE and editor files
 .vscode/
 .vs/
@@ -571,3 +576,8 @@ docs/_build/
 # - appsettings.Example.json (template with placeholder values)
 # - .env.example (template environment file)
 # - README.md (setup instructions)
+
+# Custom additions for SemanticKernelPoc
+# Runtime logs and process files
+logs/
+*.pid

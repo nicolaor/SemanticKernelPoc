@@ -6,7 +6,12 @@ namespace SemanticKernelPoc.Api.Services.Graph;
 public interface IGraphService
 {
     /// <summary>
-    /// Create a GraphServiceClient with user authentication
+    /// Create a GraphServiceClient with user authentication using On-Behalf-Of flow
+    /// </summary>
+    Task<GraphServiceClient> CreateClientAsync(string userAccessToken);
+    
+    /// <summary>
+    /// Create a GraphServiceClient with user authentication (legacy synchronous method)
     /// </summary>
     GraphServiceClient CreateClient(string userAccessToken);
     

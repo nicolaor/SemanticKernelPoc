@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import type { ChatMessage } from '../types/chat';
 
-const API_BASE_URL = 'http://localhost:5040/api';
+const API_BASE_URL = 'https://localhost:31338/api';
 
 export class ApiConnectionError extends Error {
     constructor(message: string) {
@@ -66,8 +66,10 @@ export const apiService = {
                     Authorization: `Bearer ${accessToken}`
                 }
             });
+            
             return response.data;
         } catch (error) {
+            console.error('Failed to get user profile:', error);
             return handleApiError(error);
         }
     },
@@ -80,8 +82,10 @@ export const apiService = {
                     'Content-Type': 'application/json'
                 }
             });
+            
             return response.data;
         } catch (error) {
+            console.error('Failed to send message:', error);
             return handleApiError(error);
         }
     },
@@ -93,8 +97,10 @@ export const apiService = {
                     Authorization: `Bearer ${accessToken}`
                 }
             });
+            
             return response.data;
         } catch (error) {
+            console.error('Failed to test protected endpoint:', error);
             return handleApiError(error);
         }
     }

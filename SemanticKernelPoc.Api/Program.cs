@@ -5,6 +5,8 @@ using Microsoft.SemanticKernel;
 using SemanticKernelPoc.Api.Models;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
+using SemanticKernelPoc.Api.Services;
+using SemanticKernelPoc.Api.Plugins.SharePoint;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +34,12 @@ builder.Services.AddSingleton<IConversationMemoryService, InMemoryConversationSe
 // Add Graph Service for plugins
 builder.Services.AddSingleton<IGraphService, GraphService>();
 
+// Add MCP Client Service for SharePoint search
+builder.Services.AddSingleton<IMcpClientService, McpClientService>();
+
+// Add SharePoint MCP Plugin
+builder.Services.AddSingleton<SharePointMcpPlugin>();
+
 // Semantic Kernel configuration (global - for AI service only)
 builder.Services.AddSingleton(sp =>
 {
@@ -54,7 +62,13 @@ builder.Services.AddSingleton(sp =>
             apiKey: config.ApiKey);
     }
 
-    return kernelBuilder.Build();
+    var kernel = kernelBuilder.Build();
+    
+    // Add SharePoint MCP Plugin
+    var sharePointPlugin = sp.GetRequiredService<SharePointMcpPlugin>();
+    kernel.Plugins.AddFromObject(sharePointPlugin, "SharePointMCP");
+
+    return kernel;
 });
 
 builder.Services.AddControllers();

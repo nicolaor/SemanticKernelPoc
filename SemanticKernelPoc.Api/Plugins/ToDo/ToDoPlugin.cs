@@ -9,16 +9,19 @@ namespace SemanticKernelPoc.Api.Plugins.ToDo;
 
 public class ToDoPlugin : BaseGraphPlugin
 {
+    private readonly IGraphService _graphService;
+
     public ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
         : base(graphService, logger)
     {
+        _graphService = graphService;
     }
 
-    [KernelFunction, Description("Create a new note as a To Do task")]
+    [KernelFunction, Description("Create a new task as a To Do task")]
     public async Task<string> CreateNote(Kernel kernel,
-        [Description("Note content/title")] string noteContent,
+        [Description("Task content/title")] string noteContent,
         [Description("Additional details or description (optional)")] string details = null,
-        [Description("Due date for the note/reminder (optional, e.g., 'tomorrow', '2024-01-15')")] string dueDate = null,
+        [Description("Due date for the task/reminder (optional, e.g., 'tomorrow', '2024-01-15')")] string dueDate = null,
         [Description("Priority: low, normal, or high (default normal)")] string priority = "normal",
         [Description("Task list name (optional, uses default list if not specified)")] string listName = null)
     {
@@ -29,36 +32,70 @@ public class ToDoPlugin : BaseGraphPlugin
 
             if (string.IsNullOrEmpty(userAccessToken))
             {
-                return "Unable to create note - user authentication required.";
+                return "Unable to create task - user authentication required.";
             }
 
             if (string.IsNullOrWhiteSpace(noteContent))
             {
-                return "Note content cannot be empty. Please provide the note text.";
+                return "Please provide task content to create a task.";
             }
 
             var graphClient = CreateGraphClient(userAccessToken);
 
-            // Get the appropriate task list
-            TodoTaskList taskList;
-            try
+            // Find or use default task list
+            TodoTaskList targetList;
+            if (!string.IsNullOrWhiteSpace(listName))
             {
-                taskList = await GetTaskList(graphClient, listName);
+                try
+                {
+                    targetList = await GetTaskList(graphClient, listName);
+                }
+                catch (InvalidOperationException)
+                {
+                    return $"Task list '{listName}' not found for {userName}. Please check the list name or create the list first.";
+                }
             }
-            catch (InvalidOperationException ex)
+            else
             {
-                return $"Could not find or access task list{(!string.IsNullOrEmpty(listName) ? $" '{listName}'" : "")} for {userName}: {ex.Message}";
+                // Use the default task list (usually "Tasks")
+                var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
+                targetList = taskLists?.Value?.FirstOrDefault(l => l.WellknownListName == WellknownListName.DefaultList) ??
+                           taskLists?.Value?.FirstOrDefault();
+                
+                if (targetList == null)
+                {
+                    return $"No task lists found for {userName}. Please create a task list first.";
+                }
+            }
+
+            // Parse due date if provided
+            DateTime? parsedDueDate = null;
+            if (!string.IsNullOrWhiteSpace(dueDate))
+            {
+                if (TryParseDate(dueDate, out var result))
+                {
+                    parsedDueDate = result;
+                }
+                else
+                {
+                    return $"Invalid due date format: '{dueDate}'. Please use formats like 'tomorrow', 'next week', or 'YYYY-MM-DD'.";
+                }
             }
 
             // Create the task
             var newTask = new TodoTask
             {
-                Title = noteContent.Length > 255 ? noteContent.Substring(0, 255) : noteContent,
-                Body = new ItemBody
+                Title = noteContent,
+                Body = !string.IsNullOrWhiteSpace(details) ? new ItemBody
                 {
-                    Content = string.IsNullOrWhiteSpace(details) ? noteContent : $"{noteContent}\n\n{details}",
+                    Content = details,
                     ContentType = BodyType.Text
-                },
+                } : null,
+                DueDateTime = parsedDueDate.HasValue ? new DateTimeTimeZone
+                {
+                    DateTime = parsedDueDate.Value.ToString("yyyy-MM-ddTHH:mm:ss.fffK"),
+                    TimeZone = TimeZoneInfo.Local.Id
+                } : null,
                 Importance = priority.ToLower() switch
                 {
                     "high" => Microsoft.Graph.Models.Importance.High,
@@ -67,105 +104,119 @@ public class ToDoPlugin : BaseGraphPlugin
                 }
             };
 
-            // Set due date if provided
-            if (!string.IsNullOrWhiteSpace(dueDate))
-            {
-                if (TryParseDate(dueDate, out var parsedDueDate))
-                {
-                    newTask.DueDateTime = new DateTimeTimeZone
-                    {
-                        DateTime = parsedDueDate.ToString("yyyy-MM-ddTHH:mm:ss.fff"),
-                        TimeZone = TimeZoneInfo.Local.Id
-                    };
-                }
-            }
+            var createdTask = await graphClient.Me.Todo.Lists[targetList.Id].Tasks.PostAsync(newTask);
 
-            var createdTask = await graphClient.Me.Todo.Lists[taskList.Id].Tasks.PostAsync(newTask);
-
-            return $"✅ Note created successfully for {userName}!\n" +
-                   $"📝 Note: {noteContent}\n" +
-                   $"📋 List: {taskList.DisplayName}\n" +
-                   $"⚡ Priority: {priority}\n" +
-                   (dueDate != null ? $"📅 Due: {dueDate}\n" : "") +
-                   $"🆔 Task ID: {createdTask?.Id}\n" +
-                   $"💡 Tip: You can search, update, or mark this note as complete later.";
+            return $"✅ Task created successfully for {userName}!\n" +
+                   $"📝 Task: {createdTask?.Title}\n" +
+                   $"📋 List: {targetList.DisplayName}\n" +
+                   $"🔗 Priority: {priority}\n" +
+                   (parsedDueDate.HasValue ? $"📅 Due: {parsedDueDate.Value:MMM dd, yyyy}\n" : "") +
+                   $"🌐 View: https://to-do.office.com/tasks/{createdTask?.Id}/details";
         }
         catch (Exception ex)
         {
-            return $"❌ Error creating note: {ex.Message}";
+            return $"❌ Error creating task: {ex.Message}";
         }
     }
 
-    [KernelFunction, Description("Get recent notes (To Do tasks). Use this when user asks for 'notes', 'my notes', 'recent notes', 'show notes', etc.")]
+    [KernelFunction, Description("Get recent tasks (To Do tasks). Use this when user asks for 'tasks', 'my tasks', 'recent tasks', 'show tasks', 'todos', etc.")]
     public async Task<string> GetRecentNotes(Kernel kernel,
-        [Description("Number of recent notes to retrieve (default 10)")] int count = 10,
-        [Description("Include completed notes (default false)")] bool includeCompleted = false,
+        [Description("Number of recent tasks to retrieve (default 10)")] int count = 10,
+        [Description("Include completed tasks (default false)")] bool includeCompleted = false,
         [Description("Task list name (optional, searches all lists if not specified)")] string listName = null)
     {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
             var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
+            
+            _logger.LogInformation("⏱️ GetRecentNotes started for user {UserName} with count={Count}, includeCompleted={IncludeCompleted}, listName={ListName}", 
+                userName, count, includeCompleted, listName);
 
             if (string.IsNullOrEmpty(userAccessToken))
             {
-                return "Unable to access notes - user authentication required.";
+                return "Unable to retrieve tasks - user authentication required.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            _logger.LogInformation("⏱️ GetRecentNotes: Creating Graph client for user {UserName} at {ElapsedMs}ms", userName, stopwatch.ElapsedMilliseconds);
+            var graphClient = await CreateClientAsync(userAccessToken);
+            _logger.LogInformation("⏱️ GetRecentNotes: Graph client created in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds, stopwatch.ElapsedMilliseconds);
 
             var allTasks = new List<(TodoTask Task, string ListName)>();
 
-            if (!string.IsNullOrWhiteSpace(listName))
+            if (!string.IsNullOrEmpty(listName))
             {
                 // Search specific list
                 try
                 {
                     var taskList = await GetTaskList(graphClient, listName);
-                    if (!string.IsNullOrEmpty(taskList.Id))
+                    if (taskList?.Id != null)
                     {
                         var tasks = await GetTasksFromList(graphClient, taskList.Id, includeCompleted);
-                        allTasks.AddRange(tasks.Select(t => (t, taskList.DisplayName ?? "Unknown")));
+                        allTasks.AddRange(tasks.Select(t => (t, taskList.DisplayName ?? listName)));
                     }
                 }
-                catch (InvalidOperationException)
+                catch (Exception ex)
                 {
-                    // List not found, continue with empty results
+                    _logger.LogWarning(ex, "Could not find task list '{ListName}' for user {UserName}", listName, userName);
+                    return $"Task list '{listName}' not found for {userName}.";
                 }
             }
             else
             {
-                // Search all lists
+                // Get all lists
+                var listFetchStartTime = stopwatch.ElapsedMilliseconds;
+                _logger.LogInformation("⏱️ GetRecentNotes: Fetching all task lists for user {UserName} at {ElapsedMs}ms", userName, stopwatch.ElapsedMilliseconds);
                 var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
+                _logger.LogInformation("⏱️ GetRecentNotes: Task lists retrieved in {ElapsedMs}ms (total: {TotalMs}ms) - found {ListCount} lists", 
+                    stopwatch.ElapsedMilliseconds - listFetchStartTime, stopwatch.ElapsedMilliseconds, taskLists?.Value?.Count ?? 0);
+                
                 if (taskLists?.Value?.Any() == true)
                 {
                     foreach (var list in taskLists.Value)
                     {
                         if (list.Id != null)
                         {
+                            var listProcessingStartTime = stopwatch.ElapsedMilliseconds;
+                            _logger.LogInformation("⏱️ GetRecentNotes: Processing list '{ListName}' (ID: {ListId}) for user {UserName} at {ElapsedMs}ms", 
+                                list.DisplayName, list.Id, userName, stopwatch.ElapsedMilliseconds);
+                            
                             var tasks = await GetTasksFromList(graphClient, list.Id, includeCompleted);
                             allTasks.AddRange(tasks.Select(t => (t, list.DisplayName ?? "Unknown")));
+                            
+                            _logger.LogInformation("⏱️ GetRecentNotes: List '{ListName}' tasks retrieved in {ElapsedMs}ms - found {TaskCount} tasks (total: {TotalMs}ms)", 
+                                list.DisplayName, stopwatch.ElapsedMilliseconds - listProcessingStartTime, tasks.Count, stopwatch.ElapsedMilliseconds);
                         }
                     }
                 }
             }
 
+            _logger.LogInformation("⏱️ GetRecentNotes: Total tasks found across all lists: {TaskCount} for user {UserName} at {ElapsedMs}ms", 
+                allTasks.Count, userName, stopwatch.ElapsedMilliseconds);
+
             if (!allTasks.Any())
             {
-                return $"No {(includeCompleted ? "" : "incomplete ")}notes found for {userName}.";
+                return $"No {(includeCompleted ? "" : "incomplete ")}tasks found for {userName}.";
             }
 
-            // Sort by creation time (most recent first) and take the requested count
+            // Sort by creation time (most recent first) and take the requested count (max 10 for performance)
+            var processingStartTime = stopwatch.ElapsedMilliseconds;
             var recentTasks = allTasks
                 .OrderByDescending(t => t.Task.CreatedDateTime ?? DateTimeOffset.MinValue)
-                .Take(Math.Min(count, 20))
+                .Take(Math.Min(count, 10))
                 .ToList();
+                
+            _logger.LogInformation("⏱️ GetRecentNotes: Task sorting and filtering completed in {ElapsedMs}ms - returning {ReturnCount} tasks (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - processingStartTime, recentTasks.Count, stopwatch.ElapsedMilliseconds);
 
-                        // Create note cards similar to calendar cards
-            var noteCards = recentTasks.Select(t => new
+            // Create task cards similar to calendar cards
+            var cardCreationStartTime = stopwatch.ElapsedMilliseconds;
+            var taskCards = recentTasks.Select(t => new
                 {
                 id = t.Task.Id,
-                title = t.Task.Title ?? "Untitled Note",
+                title = t.Task.Title ?? "Untitled Task",
                 content = t.Task.Body?.Content?.Length > 150 ? 
                     t.Task.Body.Content.Substring(0, 150) + "..." : 
                     t.Task.Body?.Content ?? "",
@@ -174,7 +225,6 @@ public class ToDoPlugin : BaseGraphPlugin
                 dueDate = t.Task.DueDateTime?.DateTime,
                 dueDateFormatted = t.Task.DueDateTime?.DateTime != null ? 
                     DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
-                list = t.ListName,
                 created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
                 createdDateTime = t.Task.CreatedDateTime,
                 isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
@@ -195,19 +245,24 @@ public class ToDoPlugin : BaseGraphPlugin
                 }
             }).ToList();
 
-            return $"NOTE_CARDS: {JsonSerializer.Serialize(noteCards, new JsonSerializerOptions { WriteIndented = false })}";
+            var result = $"TASK_CARDS: {JsonSerializer.Serialize(taskCards, new JsonSerializerOptions { WriteIndented = false })}";
+            _logger.LogInformation("⏱️ GetRecentNotes: Card creation completed in {ElapsedMs}ms (total: {TotalMs}ms)", 
+                stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("⏱️ GetRecentNotes: TOTAL FUNCTION TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("GetRecentNotes: Returning result: {Result}", result);
+            return result;
         }
         catch (Exception ex)
         {
-            return $"❌ Error getting recent notes: {ex.Message}";
+            return $"❌ Error getting recent tasks: {ex.Message}";
         }
     }
 
-    [KernelFunction, Description("Search notes (To Do tasks) by content")]
+    [KernelFunction, Description("Search tasks (To Do tasks) by content")]
     public async Task<string> SearchNotes(Kernel kernel,
-        [Description("Search query to find in note titles and content")] string searchQuery,
+        [Description("Search query to find in task titles and content")] string searchQuery,
         [Description("Maximum number of results (default 10)")] int maxResults = 10,
-        [Description("Include completed notes in search (default false)")] bool includeCompleted = false)
+        [Description("Include completed tasks in search (default false)")] bool includeCompleted = false)
     {
         try
         {
@@ -216,12 +271,12 @@ public class ToDoPlugin : BaseGraphPlugin
 
             if (string.IsNullOrEmpty(userAccessToken))
             {
-                return "Unable to search notes - user authentication required.";
+                return "Unable to search tasks - user authentication required.";
             }
 
             if (string.IsNullOrWhiteSpace(searchQuery))
             {
-                return "Please provide a search query to find notes.";
+                return "Please provide a search query to find tasks.";
             }
 
             var graphClient = CreateGraphClient(userAccessToken);
@@ -253,14 +308,14 @@ public class ToDoPlugin : BaseGraphPlugin
 
             if (!matchingTasks.Any())
             {
-                return $"No notes found matching '{searchQuery}' for {userName}.";
+                return $"No tasks found matching '{searchQuery}' for {userName}.";
             }
 
-            // Create note cards for search results
-            var noteCards = matchingTasks.Select(t => new
+            // Create task cards for search results
+            var taskCards = matchingTasks.Select(t => new
             {
                 id = t.Task.Id,
-                title = t.Task.Title ?? "Untitled Note",
+                title = t.Task.Title ?? "Untitled Task",
                 content = t.Task.Body?.Content?.Length > 150 ? 
                     t.Task.Body.Content.Substring(0, 150) + "..." : 
                     t.Task.Body?.Content ?? "",
@@ -269,7 +324,6 @@ public class ToDoPlugin : BaseGraphPlugin
                 dueDate = t.Task.DueDateTime?.DateTime,
                 dueDateFormatted = t.Task.DueDateTime?.DateTime != null ? 
                     DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
-                list = t.ListName,
                 created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
                 createdDateTime = t.Task.CreatedDateTime,
                 isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
@@ -291,17 +345,17 @@ public class ToDoPlugin : BaseGraphPlugin
                 }
             }).ToList();
 
-            return $"NOTE_CARDS: {JsonSerializer.Serialize(noteCards, new JsonSerializerOptions { WriteIndented = false })}";
+            return $"TASK_CARDS: {JsonSerializer.Serialize(taskCards, new JsonSerializerOptions { WriteIndented = false })}";
         }
         catch (Exception ex)
         {
-            return $"❌ Error searching notes: {ex.Message}";
+            return $"❌ Error searching tasks: {ex.Message}";
         }
     }
 
-    [KernelFunction, Description("Mark a note as complete or update its status")]
+    [KernelFunction, Description("Mark a task as complete or update its status")]
     public async Task<string> UpdateNoteStatus(Kernel kernel,
-        [Description("Note title or part of title to find")] string noteTitle,
+        [Description("Task title or part of title to find")] string noteTitle,
         [Description("New status: notstarted, inprogress, completed, waitingonothers, or deferred")] string status = "completed")
     {
         try
@@ -311,12 +365,12 @@ public class ToDoPlugin : BaseGraphPlugin
 
             if (string.IsNullOrEmpty(userAccessToken))
             {
-                return "Unable to update note - user authentication required.";
+                return "Unable to update task - user authentication required.";
             }
 
             if (string.IsNullOrWhiteSpace(noteTitle))
             {
-                return "Please provide the note title to update.";
+                return "Please provide the task title to update.";
             }
 
             var graphClient = CreateGraphClient(userAccessToken);
@@ -342,20 +396,19 @@ public class ToDoPlugin : BaseGraphPlugin
 
                 await graphClient.Me.Todo.Lists[foundTask.ListId].Tasks[foundTask.Task.Id].PatchAsync(updateTask);
 
-                return $"✅ Note updated successfully for {userName}!\n" +
-                       $"📝 Note: {foundTask.Task.Title}\n" +
-                       $"📋 List: {foundTask.ListName}\n" +
+                return $"✅ Task updated successfully for {userName}!\n" +
+                       $"📝 Task: {foundTask.Task.Title}\n" +
                        $"🔄 Status: {status}\n" +
-                       (status.ToLower() == "completed" ? "🎉 Note marked as complete!" : "");
+                       $"📋 List: {foundTask.ListName}";
             }
-            catch (InvalidOperationException ex)
+            catch (InvalidOperationException)
             {
-                return $"No note found with title containing '{noteTitle}' for {userName}: {ex.Message}";
+                return $"❌ Task with title containing '{noteTitle}' not found for {userName}.";
             }
         }
         catch (Exception ex)
         {
-            return $"❌ Error updating note: {ex.Message}";
+            return $"❌ Error updating task: {ex.Message}";
         }
     }
 
@@ -497,6 +550,12 @@ public class ToDoPlugin : BaseGraphPlugin
         }
 
         return DateTime.TryParse(input, out result);
+    }
+
+    private async Task<GraphServiceClient> CreateClientAsync(string userAccessToken)
+    {
+        // Use the injected GraphService to create client with On-Behalf-Of flow
+        return await _graphService.CreateClientAsync(userAccessToken);
     }
 
     private GraphServiceClient CreateGraphClient(string userAccessToken)
