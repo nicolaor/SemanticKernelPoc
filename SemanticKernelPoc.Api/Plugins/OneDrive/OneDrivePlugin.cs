@@ -1,18 +1,11 @@
-using Microsoft.Graph;
-using Microsoft.Graph.Models;
 using Microsoft.SemanticKernel;
 using System.ComponentModel;
 using SemanticKernelPoc.Api.Services.Graph;
 
 namespace SemanticKernelPoc.Api.Plugins.OneDrive;
 
-public class OneDrivePlugin : BaseGraphPlugin
+public class OneDrivePlugin(IGraphService graphService, ILogger<OneDrivePlugin> logger) : BaseGraphPlugin(graphService, logger)
 {
-    public OneDrivePlugin(IGraphService graphService, ILogger<OneDrivePlugin> logger) 
-        : base(graphService, logger)
-    {
-    }
-
     [KernelFunction, Description("Get basic OneDrive information")]
     public async Task<string> GetOneDriveInfo(Kernel kernel)
     {
@@ -30,7 +23,7 @@ public class OneDrivePlugin : BaseGraphPlugin
                         DriveType = drive.DriveType?.ToString() ?? "Personal",
                         TotalSpace = drive.Quota?.Total.HasValue == true ? $"{drive.Quota.Total.Value / (1024 * 1024 * 1024)} GB" : "Unknown",
                         UsedSpace = drive.Quota?.Used.HasValue == true ? $"{drive.Quota.Used.Value / (1024 * 1024 * 1024)} GB" : "Unknown",
-                        WebUrl = drive.WebUrl
+                        drive.WebUrl
                     };
 
                     return FormatJsonResponse(new[] { driveInfo }, userName, "OneDrive information");
@@ -78,7 +71,7 @@ public class OneDrivePlugin : BaseGraphPlugin
             async (graphClient, userName) =>
             {
                 var drive = await graphClient.Me.Drive.GetAsync();
-                
+
                 if (drive == null)
                 {
                     return $"Could not access OneDrive for {userName}.";
@@ -93,25 +86,25 @@ public class OneDrivePlugin : BaseGraphPlugin
                         ("📊 Total Space", drive.Quota?.Total.HasValue == true ? $"{drive.Quota.Total.Value / (1024 * 1024 * 1024)} GB" : "Unknown"),
                         ("📈 Used Space", drive.Quota?.Used.HasValue == true ? $"{drive.Quota.Used.Value / (1024 * 1024 * 1024)} GB" : "Unknown")
                     ),
-                    
+
                     "create" => CreateSuccessResponse(
                         "OneDrive folder creation capability",
                         userName,
                         ("📁 Folder", folderName ?? "Not specified"),
                         ("📝 Note", "Folder creation requires advanced Graph Drive API configuration")
                     ),
-                    
+
                     "list" => CreateSuccessResponse(
                         "OneDrive file listing capability",
                         userName,
                         ("📂 Status", "Drive accessible"),
                         ("📝 Note", "File enumeration requires additional SDK work")
                     ),
-                    
+
                     _ => $"Unknown operation '{operation}'. Available: info, create, list"
                 };
             },
             "OneDriveFolderOperations"
         );
     }
-} 
+}

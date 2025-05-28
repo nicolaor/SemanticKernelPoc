@@ -7,16 +7,8 @@ using SemanticKernelPoc.Api.Services.Graph;
 
 namespace SemanticKernelPoc.Api.Plugins.ToDo;
 
-public class ToDoPlugin : BaseGraphPlugin
+public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) : BaseGraphPlugin(graphService, logger)
 {
-    private readonly IGraphService _graphService;
-
-    public ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
-        : base(graphService, logger)
-    {
-        _graphService = graphService;
-    }
-
     [KernelFunction, Description("Create a new task as a To Do task")]
     public async Task<string> CreateNote(Kernel kernel,
         [Description("Task content/title")] string noteContent,
@@ -40,7 +32,7 @@ public class ToDoPlugin : BaseGraphPlugin
                 return "Please provide task content to create a task.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
             // Find or use default task list
             TodoTaskList targetList;
@@ -61,7 +53,7 @@ public class ToDoPlugin : BaseGraphPlugin
                 var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
                 targetList = taskLists?.Value?.FirstOrDefault(l => l.WellknownListName == WellknownListName.DefaultList) ??
                            taskLists?.Value?.FirstOrDefault();
-                
+
                 if (targetList == null)
                 {
                     return $"No task lists found for {userName}. Please create a task list first.";
@@ -130,8 +122,8 @@ public class ToDoPlugin : BaseGraphPlugin
         {
             var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
             var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
-            
-            _logger.LogInformation("⏱️ GetRecentNotes started for user {UserName} with count={Count}, includeCompleted={IncludeCompleted}, listName={ListName}", 
+
+            _logger.LogInformation("⏱️ GetRecentNotes started for user {UserName} with count={Count}, includeCompleted={IncludeCompleted}, listName={ListName}",
                 userName, count, includeCompleted, listName);
 
             if (string.IsNullOrEmpty(userAccessToken))
@@ -141,7 +133,7 @@ public class ToDoPlugin : BaseGraphPlugin
 
             _logger.LogInformation("⏱️ GetRecentNotes: Creating Graph client for user {UserName} at {ElapsedMs}ms", userName, stopwatch.ElapsedMilliseconds);
             var graphClient = await CreateClientAsync(userAccessToken);
-            _logger.LogInformation("⏱️ GetRecentNotes: Graph client created in {ElapsedMs}ms (total: {TotalMs}ms)", 
+            _logger.LogInformation("⏱️ GetRecentNotes: Graph client created in {ElapsedMs}ms (total: {TotalMs}ms)",
                 stopwatch.ElapsedMilliseconds, stopwatch.ElapsedMilliseconds);
 
             var allTasks = new List<(TodoTask Task, string ListName)>();
@@ -170,9 +162,9 @@ public class ToDoPlugin : BaseGraphPlugin
                 var listFetchStartTime = stopwatch.ElapsedMilliseconds;
                 _logger.LogInformation("⏱️ GetRecentNotes: Fetching all task lists for user {UserName} at {ElapsedMs}ms", userName, stopwatch.ElapsedMilliseconds);
                 var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
-                _logger.LogInformation("⏱️ GetRecentNotes: Task lists retrieved in {ElapsedMs}ms (total: {TotalMs}ms) - found {ListCount} lists", 
+                _logger.LogInformation("⏱️ GetRecentNotes: Task lists retrieved in {ElapsedMs}ms (total: {TotalMs}ms) - found {ListCount} lists",
                     stopwatch.ElapsedMilliseconds - listFetchStartTime, stopwatch.ElapsedMilliseconds, taskLists?.Value?.Count ?? 0);
-                
+
                 if (taskLists?.Value?.Any() == true)
                 {
                     foreach (var list in taskLists.Value)
@@ -180,20 +172,20 @@ public class ToDoPlugin : BaseGraphPlugin
                         if (list.Id != null)
                         {
                             var listProcessingStartTime = stopwatch.ElapsedMilliseconds;
-                            _logger.LogInformation("⏱️ GetRecentNotes: Processing list '{ListName}' (ID: {ListId}) for user {UserName} at {ElapsedMs}ms", 
+                            _logger.LogInformation("⏱️ GetRecentNotes: Processing list '{ListName}' (ID: {ListId}) for user {UserName} at {ElapsedMs}ms",
                                 list.DisplayName, list.Id, userName, stopwatch.ElapsedMilliseconds);
-                            
+
                             var tasks = await GetTasksFromList(graphClient, list.Id, includeCompleted);
                             allTasks.AddRange(tasks.Select(t => (t, list.DisplayName ?? "Unknown")));
-                            
-                            _logger.LogInformation("⏱️ GetRecentNotes: List '{ListName}' tasks retrieved in {ElapsedMs}ms - found {TaskCount} tasks (total: {TotalMs}ms)", 
+
+                            _logger.LogInformation("⏱️ GetRecentNotes: List '{ListName}' tasks retrieved in {ElapsedMs}ms - found {TaskCount} tasks (total: {TotalMs}ms)",
                                 list.DisplayName, stopwatch.ElapsedMilliseconds - listProcessingStartTime, tasks.Count, stopwatch.ElapsedMilliseconds);
                         }
                     }
                 }
             }
 
-            _logger.LogInformation("⏱️ GetRecentNotes: Total tasks found across all lists: {TaskCount} for user {UserName} at {ElapsedMs}ms", 
+            _logger.LogInformation("⏱️ GetRecentNotes: Total tasks found across all lists: {TaskCount} for user {UserName} at {ElapsedMs}ms",
                 allTasks.Count, userName, stopwatch.ElapsedMilliseconds);
 
             if (!allTasks.Any())
@@ -207,23 +199,23 @@ public class ToDoPlugin : BaseGraphPlugin
                 .OrderByDescending(t => t.Task.CreatedDateTime ?? DateTimeOffset.MinValue)
                 .Take(Math.Min(count, 10))
                 .ToList();
-                
-            _logger.LogInformation("⏱️ GetRecentNotes: Task sorting and filtering completed in {ElapsedMs}ms - returning {ReturnCount} tasks (total: {TotalMs}ms)", 
+
+            _logger.LogInformation("⏱️ GetRecentNotes: Task sorting and filtering completed in {ElapsedMs}ms - returning {ReturnCount} tasks (total: {TotalMs}ms)",
                 stopwatch.ElapsedMilliseconds - processingStartTime, recentTasks.Count, stopwatch.ElapsedMilliseconds);
 
             // Create task cards similar to calendar cards
             var cardCreationStartTime = stopwatch.ElapsedMilliseconds;
             var taskCards = recentTasks.Select(t => new
-                {
+            {
                 id = t.Task.Id,
                 title = t.Task.Title ?? "Untitled Task",
-                content = t.Task.Body?.Content?.Length > 150 ? 
-                    t.Task.Body.Content.Substring(0, 150) + "..." : 
+                content = t.Task.Body?.Content?.Length > 150 ?
+                    t.Task.Body.Content[..150] + "..." :
                     t.Task.Body?.Content ?? "",
                 status = t.Task.Status?.ToString() ?? "NotStarted",
                 priority = t.Task.Importance?.ToString() ?? "Normal",
                 dueDate = t.Task.DueDateTime?.DateTime,
-                dueDateFormatted = t.Task.DueDateTime?.DateTime != null ? 
+                dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
                     DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
                 created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
                 createdDateTime = t.Task.CreatedDateTime,
@@ -232,7 +224,7 @@ public class ToDoPlugin : BaseGraphPlugin
                 priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
                 {
                     "high" => "#ef4444",
-                    "low" => "#10b981", 
+                    "low" => "#10b981",
                     _ => "#6b7280"
                 },
                 statusColor = t.Task.Status?.ToString()?.ToLower() switch
@@ -246,7 +238,7 @@ public class ToDoPlugin : BaseGraphPlugin
             }).ToList();
 
             var result = $"TASK_CARDS: {JsonSerializer.Serialize(taskCards, new JsonSerializerOptions { WriteIndented = false })}";
-            _logger.LogInformation("⏱️ GetRecentNotes: Card creation completed in {ElapsedMs}ms (total: {TotalMs}ms)", 
+            _logger.LogInformation("⏱️ GetRecentNotes: Card creation completed in {ElapsedMs}ms (total: {TotalMs}ms)",
                 stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
             _logger.LogInformation("⏱️ GetRecentNotes: TOTAL FUNCTION TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
             _logger.LogInformation("GetRecentNotes: Returning result: {Result}", result);
@@ -279,7 +271,7 @@ public class ToDoPlugin : BaseGraphPlugin
                 return "Please provide a search query to find tasks.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
             var allTasks = new List<(TodoTask Task, string ListName)>();
 
@@ -300,9 +292,9 @@ public class ToDoPlugin : BaseGraphPlugin
             // Filter tasks by search query (case-insensitive)
             var searchLower = searchQuery.ToLower();
             var matchingTasks = allTasks
-                .Where(t => 
-                    (t.Task.Title?.ToLower().Contains(searchLower) == true) ||
-                    (t.Task.Body?.Content?.ToLower().Contains(searchLower) == true))
+                .Where(t =>
+                    (t.Task.Title?.ToLower().Contains(searchLower, StringComparison.CurrentCultureIgnoreCase) == true) ||
+                    (t.Task.Body?.Content?.ToLower().Contains(searchLower, StringComparison.CurrentCultureIgnoreCase) == true))
                 .Take(Math.Min(maxResults, 20))
                 .ToList();
 
@@ -316,23 +308,23 @@ public class ToDoPlugin : BaseGraphPlugin
             {
                 id = t.Task.Id,
                 title = t.Task.Title ?? "Untitled Task",
-                content = t.Task.Body?.Content?.Length > 150 ? 
-                    t.Task.Body.Content.Substring(0, 150) + "..." : 
+                content = t.Task.Body?.Content?.Length > 150 ?
+                    t.Task.Body.Content[..150] + "..." :
                     t.Task.Body?.Content ?? "",
                 status = t.Task.Status?.ToString() ?? "NotStarted",
                 priority = t.Task.Importance?.ToString() ?? "Normal",
                 dueDate = t.Task.DueDateTime?.DateTime,
-                dueDateFormatted = t.Task.DueDateTime?.DateTime != null ? 
+                dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
                     DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
                 created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
                 createdDateTime = t.Task.CreatedDateTime,
                 isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
-                matchReason = (t.Task.Title?.ToLower().Contains(searchLower) == true) ? "Title" : "Content",
+                matchReason = (t.Task.Title?.ToLower().Contains(searchLower, StringComparison.CurrentCultureIgnoreCase) == true) ? "Title" : "Content",
                 webLink = $"https://to-do.office.com/tasks/id/{t.Task.Id}/details",
                 priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
                 {
                     "high" => "#ef4444",
-                    "low" => "#10b981", 
+                    "low" => "#10b981",
                     _ => "#6b7280"
                 },
                 statusColor = t.Task.Status?.ToString()?.ToLower() switch
@@ -373,13 +365,13 @@ public class ToDoPlugin : BaseGraphPlugin
                 return "Please provide the task title to update.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
             // Find the task
             try
             {
                 var foundTask = await FindTaskByTitle(graphClient, noteTitle);
-                
+
                 // Update the task status
                 var updateTask = new TodoTask
                 {
@@ -425,7 +417,7 @@ public class ToDoPlugin : BaseGraphPlugin
                 return "Unable to access task lists - user authentication required.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var graphClient = await CreateClientAsync(userAccessToken);
 
             var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
 
@@ -451,31 +443,27 @@ public class ToDoPlugin : BaseGraphPlugin
         }
     }
 
-    private async Task<TodoTaskList> GetTaskList(GraphServiceClient graphClient, string listName)
+    private static async Task<TodoTaskList> GetTaskList(GraphServiceClient graphClient, string listName)
     {
         var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
-        
+
         if (taskLists?.Value?.Any() != true)
             throw new InvalidOperationException("No task lists found for user");
 
         if (string.IsNullOrWhiteSpace(listName))
         {
             // Return default list (usually "Tasks")
-            return taskLists.Value.FirstOrDefault(l => l.WellknownListName == WellknownListName.DefaultList) 
+            return taskLists.Value.FirstOrDefault(l => l.WellknownListName == WellknownListName.DefaultList)
                 ?? taskLists.Value.First();
         }
 
         // Find list by name (case-insensitive)
-        var foundList = taskLists.Value.FirstOrDefault(l => 
-            l.DisplayName?.Equals(listName, StringComparison.OrdinalIgnoreCase) == true);
-        
-        if (foundList == null)
-            throw new InvalidOperationException($"Task list '{listName}' not found");
-            
+        var foundList = taskLists.Value.FirstOrDefault(l =>
+            l.DisplayName?.Equals(listName, StringComparison.OrdinalIgnoreCase) == true) ?? throw new InvalidOperationException($"Task list '{listName}' not found");
         return foundList;
     }
 
-    private async Task<List<TodoTask>> GetTasksFromList(GraphServiceClient graphClient, string listId, bool includeCompleted)
+    private static async Task<List<TodoTask>> GetTasksFromList(GraphServiceClient graphClient, string listId, bool includeCompleted)
     {
         var tasks = await graphClient.Me.Todo.Lists[listId].Tasks.GetAsync(requestConfig =>
         {
@@ -484,16 +472,16 @@ public class ToDoPlugin : BaseGraphPlugin
                 requestConfig.QueryParameters.Filter = "status ne 'completed'";
             }
             requestConfig.QueryParameters.Top = 50;
-            requestConfig.QueryParameters.Orderby = new[] { "createdDateTime desc" };
+            requestConfig.QueryParameters.Orderby = ["createdDateTime desc"];
         });
 
-        return tasks?.Value?.ToList() ?? new List<TodoTask>();
+        return tasks?.Value?.ToList() ?? [];
     }
 
-    private async Task<(TodoTask Task, string ListId, string ListName)> FindTaskByTitle(GraphServiceClient graphClient, string titleSearch)
+    private static async Task<(TodoTask Task, string ListId, string ListName)> FindTaskByTitle(GraphServiceClient graphClient, string titleSearch)
     {
         var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
-        
+
         if (taskLists?.Value?.Any() != true)
             throw new InvalidOperationException("No task lists found for user");
 
@@ -504,8 +492,8 @@ public class ToDoPlugin : BaseGraphPlugin
             if (string.IsNullOrEmpty(list.Id)) continue;
 
             var tasks = await GetTasksFromList(graphClient, list.Id, true); // Include completed
-            var matchingTask = tasks.FirstOrDefault(t => 
-                t.Title?.ToLower().Contains(searchLower) == true);
+            var matchingTask = tasks.FirstOrDefault(t =>
+                t.Title?.ToLower().Contains(searchLower, StringComparison.CurrentCultureIgnoreCase) == true);
 
             if (matchingTask != null)
             {
@@ -516,7 +504,7 @@ public class ToDoPlugin : BaseGraphPlugin
         throw new InvalidOperationException($"No task found with title containing '{titleSearch}'");
     }
 
-    private bool TryParseDate(string input, out DateTime result)
+    private static bool TryParseDate(string input, out DateTime result)
     {
         result = default;
 
@@ -557,13 +545,4 @@ public class ToDoPlugin : BaseGraphPlugin
         // Use the injected GraphService to create client with On-Behalf-Of flow
         return await _graphService.CreateClientAsync(userAccessToken);
     }
-
-    private GraphServiceClient CreateGraphClient(string userAccessToken)
-    {
-        var httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.Authorization = 
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", userAccessToken);
-        
-        return new GraphServiceClient(httpClient);
-    }
-} 
+}

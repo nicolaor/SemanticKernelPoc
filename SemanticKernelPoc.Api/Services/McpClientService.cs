@@ -29,7 +29,7 @@ public class McpClientService : IMcpClientService, IDisposable
         _logger = logger;
         _environment = environment;
         _mcpServerUrl = configuration["McpServer:Url"] ?? "http://localhost:31339";
-        
+
         // Configure SSL bypass for development (only once)
         if (_environment.IsDevelopment() && !_sslBypassConfigured && _mcpServerUrl.Contains("localhost"))
         {
@@ -38,19 +38,19 @@ public class McpClientService : IMcpClientService, IDisposable
         }
     }
 
-    private void ConfigureSslBypass()
+    private static void ConfigureSslBypass()
     {
         // For development only: bypass SSL certificate validation for localhost
-        ServicePointManager.ServerCertificateValidationCallback = 
+        ServicePointManager.ServerCertificateValidationCallback =
             (sender, certificate, chain, sslPolicyErrors) =>
             {
                 // Allow any certificate for localhost in development
-                if (sender is HttpWebRequest request && 
+                if (sender is HttpWebRequest request &&
                     (request.RequestUri.Host == "localhost" || request.RequestUri.Host == "127.0.0.1"))
                 {
                     return true;
                 }
-                
+
                 // For other hosts, use default validation
                 return sslPolicyErrors == SslPolicyErrors.None;
             };
@@ -61,7 +61,7 @@ public class McpClientService : IMcpClientService, IDisposable
         try
         {
             await EnsureClientConnectedAsync();
-            
+
             var result = await _mcpClient.CallToolAsync("SearchCoffeeNetSites", new Dictionary<string, object>
             {
                 ["userToken"] = userToken,
@@ -85,7 +85,7 @@ public class McpClientService : IMcpClientService, IDisposable
         try
         {
             await EnsureClientConnectedAsync();
-            
+
             var result = await _mcpClient.CallToolAsync("SearchRecentCoffeeNetSites", new Dictionary<string, object>
             {
                 ["userToken"] = userToken,
@@ -107,7 +107,7 @@ public class McpClientService : IMcpClientService, IDisposable
         try
         {
             await EnsureClientConnectedAsync();
-            
+
             var result = await _mcpClient.CallToolAsync("FindCoffeeNetSitesByKeyword", new Dictionary<string, object>
             {
                 ["userToken"] = userToken,
@@ -196,4 +196,4 @@ public class McpClientService : IMcpClientService, IDisposable
             }
         }
     }
-} 
+}

@@ -34,7 +34,7 @@ public class SharePointSearchTool
                 return "Error: User token is required for authentication.";
             }
 
-            _logger.LogInformation("Searching CoffeeNet sites with query: {Query}, createdAfter: {CreatedAfter}, createdBefore: {CreatedBefore}, maxResults: {MaxResults}", 
+            _logger.LogInformation("Searching CoffeeNet sites with query: {Query}, createdAfter: {CreatedAfter}, createdBefore: {CreatedBefore}, maxResults: {MaxResults}",
                 query, createdAfter, createdBefore, maxResults);
 
             // Validate and constrain max results
@@ -50,9 +50,9 @@ public class SharePointSearchTool
             };
 
             var searchResponse = await _sharePointSearchService.SearchCoffeeNetSitesAsync(searchRequest, userToken);
-            
+
             var result = FormatSearchResults(searchResponse);
-            
+
             _logger.LogInformation("CoffeeNet sites search completed successfully. Found {Count} sites.", searchResponse.Sites.Count);
             return result;
         }
@@ -78,9 +78,9 @@ public class SharePointSearchTool
             }
 
             var createdAfter = DateTime.UtcNow.AddDays(-Math.Abs(daysBack)).ToString("yyyy-MM-dd");
-            
+
             _logger.LogInformation("Searching for recent CoffeeNet sites created after {CreatedAfter}", createdAfter);
-            
+
             var searchRequest = new SharePointSearchRequest
             {
                 Query = query ?? string.Empty,
@@ -89,7 +89,7 @@ public class SharePointSearchTool
             };
 
             var searchResponse = await _sharePointSearchService.SearchCoffeeNetSitesAsync(searchRequest, userToken);
-            
+
             return FormatSearchResults(searchResponse);
         }
         catch (Exception ex)
@@ -119,7 +119,7 @@ public class SharePointSearchTool
             }
 
             _logger.LogInformation("Searching CoffeeNet sites by keywords: {Keywords}", keywords);
-            
+
             var searchRequest = new SharePointSearchRequest
             {
                 Query = keywords,
@@ -127,7 +127,7 @@ public class SharePointSearchTool
             };
 
             var searchResponse = await _sharePointSearchService.SearchCoffeeNetSitesAsync(searchRequest, userToken);
-            
+
             return FormatSearchResults(searchResponse);
         }
         catch (Exception ex)
@@ -157,20 +157,20 @@ public class SharePointSearchTool
             result += $"URL: {site.Url}\n";
             result += $"Created: {site.Created:yyyy-MM-dd}\n";
             result += $"CN365 Template ID: {site.TemplateId}\n";
-            
+
             if (!string.IsNullOrEmpty(site.Description))
             {
                 result += $"Description: {site.Description}\n";
             }
-            
+
             if (!string.IsNullOrEmpty(site.WebTemplate))
             {
                 result += $"Web Template: {site.WebTemplate}\n";
             }
-            
+
             result += "\n---\n\n";
         }
 
         return result;
     }
-} 
+}

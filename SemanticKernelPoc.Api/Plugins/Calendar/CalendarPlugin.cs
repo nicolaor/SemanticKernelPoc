@@ -7,13 +7,8 @@ using SemanticKernelPoc.Api.Services.Helpers;
 
 namespace SemanticKernelPoc.Api.Plugins.Calendar;
 
-public class CalendarPlugin : BaseGraphPlugin
+public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> logger) : BaseGraphPlugin(graphService, logger)
 {
-    public CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> logger) 
-        : base(graphService, logger)
-    {
-    }
-
     private static CalendarEventResponse CreateCalendarEventResponse(Event evt)
     {
         return new CalendarEventResponse(
@@ -24,7 +19,7 @@ public class CalendarPlugin : BaseGraphPlugin
             evt.Organizer?.EmailAddress?.Name ?? "Unknown",
             evt.IsAllDay ?? false,
             evt.Id,
-            evt.Attendees?.Any() == true ? evt.Attendees.Count() : null,
+            evt.Attendees?.Any() == true ? evt.Attendees.Count : null,
             CalendarResponseFormats.GenerateOutlookWebLink(evt.Id ?? ""),
             evt.Attendees?.Select(a => new AttendeeInfo(
                 a.EmailAddress?.Name ?? a.EmailAddress?.Address ?? "Unknown",
@@ -35,7 +30,7 @@ public class CalendarPlugin : BaseGraphPlugin
     }
 
     [KernelFunction, Description("Get the user's upcoming calendar events")]
-    public async Task<string> GetUpcomingEvents(Kernel kernel, 
+    public async Task<string> GetUpcomingEvents(Kernel kernel,
         [Description("Number of days to look ahead (default 7)")] int days = 7,
         [Description("Maximum number of events to return (default 20)")] int maxEvents = 20)
     {
@@ -51,7 +46,7 @@ public class CalendarPlugin : BaseGraphPlugin
                     requestConfig.QueryParameters.StartDateTime = startTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.EndDateTime = endTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.Top = maxEvents;
-                    requestConfig.QueryParameters.Orderby = new[] { "start/dateTime" };
+                    requestConfig.QueryParameters.Orderby = ["start/dateTime"];
                 });
 
                 if (events?.Value?.Any() == true)
@@ -145,7 +140,7 @@ public class CalendarPlugin : BaseGraphPlugin
                 var createdEvent = await graphClient.Me.Calendar.Events.PostAsync(newEvent);
 
                 return CreateSuccessResponse(
-                    "Calendar event creation", 
+                    "Calendar event creation",
                     userName,
                     ("📅 Subject", createdEvent?.Subject ?? subject),
                     ("🕐 Start", parsedStart.ToString("yyyy-MM-dd HH:mm")),
@@ -184,21 +179,20 @@ public class CalendarPlugin : BaseGraphPlugin
                 {
                     requestConfig.QueryParameters.StartDateTime = startTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.EndDateTime = endTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
-                    requestConfig.QueryParameters.Orderby = new[] { "start/dateTime" };
+                    requestConfig.QueryParameters.Orderby = ["start/dateTime"];
                 });
 
                 var busySlots = new List<(DateTime Start, DateTime End)>();
 
                 if (events?.Value?.Any() == true)
                 {
-                    busySlots = events.Value
+                    busySlots = [.. events.Value
                         .Where(evt => evt.Start?.DateTime != null && evt.End?.DateTime != null)
                         .Select(evt => (
                             Start: DateTime.Parse(evt.Start!.DateTime!).AddMinutes(-bufferBefore),
                             End: DateTime.Parse(evt.End!.DateTime!).AddMinutes(bufferAfter)
                         ))
-                        .OrderBy(slot => slot.Start)
-                        .ToList();
+                        .OrderBy(slot => slot.Start)];
                 }
 
                 var availableSlots = new List<(DateTime Start, DateTime End)>();
@@ -221,10 +215,10 @@ public class CalendarPlugin : BaseGraphPlugin
                     }
                     else
                     {
-                        var firstBusy = dayBusySlots.OrderBy(s => s.Start).First();
-                        if (dayStart < firstBusy.Start)
+                        var (Start, End) = dayBusySlots.OrderBy(s => s.Start).First();
+                        if (dayStart < Start)
                         {
-                            availableSlots.Add((dayStart, firstBusy.Start));
+                            availableSlots.Add((dayStart, Start));
                         }
 
                         for (int i = 0; i < dayBusySlots.Count - 1; i++)
@@ -260,7 +254,7 @@ public class CalendarPlugin : BaseGraphPlugin
 
                 if (suitableSlots.Any())
                 {
-                    return FormatJsonResponse(suitableSlots, userName, 
+                    return FormatJsonResponse(suitableSlots, userName,
                         $"Available time slots ({durationMinutes} minutes needed)");
                 }
 
@@ -284,7 +278,7 @@ public class CalendarPlugin : BaseGraphPlugin
                 {
                     requestConfig.QueryParameters.StartDateTime = today.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.EndDateTime = tomorrow.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
-                    requestConfig.QueryParameters.Orderby = new[] { "start/dateTime" };
+                    requestConfig.QueryParameters.Orderby = ["start/dateTime"];
                 });
 
                 if (events?.Value?.Any() == true)
@@ -309,7 +303,7 @@ public class CalendarPlugin : BaseGraphPlugin
                     requestConfig.QueryParameters.StartDateTime = tomorrow.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.EndDateTime = weekFromNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.Top = 5;
-                    requestConfig.QueryParameters.Orderby = new[] { "start/dateTime" };
+                    requestConfig.QueryParameters.Orderby = ["start/dateTime"];
                 });
 
                 if (upcomingEvents?.Value?.Any() == true)
@@ -459,7 +453,7 @@ public class CalendarPlugin : BaseGraphPlugin
                 {
                     requestConfig.QueryParameters.StartDateTime = start.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.EndDateTime = end.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
-                    requestConfig.QueryParameters.Orderby = new[] { "start/dateTime" };
+                    requestConfig.QueryParameters.Orderby = ["start/dateTime"];
                 });
 
                 if (events?.Value?.Any() == true)
@@ -534,7 +528,7 @@ public class CalendarPlugin : BaseGraphPlugin
                     requestConfig.QueryParameters.StartDateTime = startTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.EndDateTime = endTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.Top = 1; // Only get the very next event
-                    requestConfig.QueryParameters.Orderby = new[] { "start/dateTime" };
+                    requestConfig.QueryParameters.Orderby = ["start/dateTime"];
                 });
 
                 if (events?.Value?.Any() == true)
@@ -574,7 +568,7 @@ public class CalendarPlugin : BaseGraphPlugin
                 {
                     requestConfig.QueryParameters.StartDateTime = startTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
                     requestConfig.QueryParameters.EndDateTime = endTime.ToString("yyyy-MM-ddTHH:mm:ss.fffK");
-                    requestConfig.QueryParameters.Orderby = new[] { "start/dateTime" };
+                    requestConfig.QueryParameters.Orderby = ["start/dateTime"];
                 });
 
                 var eventCount = events?.Value?.Count ?? 0;
@@ -600,7 +594,7 @@ public class CalendarPlugin : BaseGraphPlugin
                         eventCount,
                         userName,
                         timeRangeDescription,
-                        Array.Empty<CalendarEventResponse>()
+                        []
                     );
 
                     return CalendarResponseFormats.FormatCalendarCards(countResponse);
@@ -609,4 +603,4 @@ public class CalendarPlugin : BaseGraphPlugin
             "GetEventCount"
         );
     }
-} 
+}

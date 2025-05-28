@@ -21,7 +21,7 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.WithOrigins(builder.Configuration.GetSection("AllowedOrigins").Get<string[]>() ?? Array.Empty<string>())
+        policy.WithOrigins(builder.Configuration.GetSection("AllowedOrigins").Get<string[]>() ?? [])
             .AllowAnyMethod()
             .AllowAnyHeader()
             .AllowCredentials();
@@ -47,7 +47,7 @@ builder.Services.AddSingleton(sp =>
         ?? throw new InvalidOperationException("SemanticKernel configuration is missing");
 
     var kernelBuilder = Kernel.CreateBuilder();
-    
+
     if (config.UseAzureOpenAI)
     {
         kernelBuilder.AddAzureOpenAIChatCompletion(
@@ -63,7 +63,7 @@ builder.Services.AddSingleton(sp =>
     }
 
     var kernel = kernelBuilder.Build();
-    
+
     // Add SharePoint MCP Plugin
     var sharePointPlugin = sp.GetRequiredService<SharePointMcpPlugin>();
     kernel.Plugins.AddFromObject(sharePointPlugin, "SharePointMCP");
@@ -78,7 +78,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "SemanticKernelPoc API", Version = "v1" });
-    
+
     var clientId = builder.Configuration["AzureAd:ClientId"];
     c.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
     {

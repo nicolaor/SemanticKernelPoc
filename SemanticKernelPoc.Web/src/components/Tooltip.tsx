@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef } from "react";
 
 interface TooltipProps {
   content: string;
@@ -24,11 +24,7 @@ const Tooltip: React.FC<TooltipProps> = ({ content, children, delay = 300 }) => 
   };
 
   return (
-    <div 
-      className="relative inline-block"
-      onMouseEnter={showTooltip}
-      onMouseLeave={hideTooltip}
-    >
+    <div className="relative inline-block" onMouseEnter={showTooltip} onMouseLeave={hideTooltip}>
       {children}
       {isVisible && (
         <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap z-50 pointer-events-none">
@@ -40,4 +36,4 @@ const Tooltip: React.FC<TooltipProps> = ({ content, children, delay = 300 }) => 
   );
 };
 
-export default Tooltip; 
+export default Tooltip;

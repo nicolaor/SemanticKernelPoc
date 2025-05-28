@@ -3,17 +3,12 @@ using System.Collections.Concurrent;
 
 namespace SemanticKernelPoc.Api.Services.Memory;
 
-public class InMemoryConversationService : IConversationMemoryService
+public class InMemoryConversationService(ILogger<InMemoryConversationService> logger) : IConversationMemoryService
 {
     private readonly ConcurrentDictionary<string, List<ChatMessage>> _conversations = new();
     private readonly ConcurrentDictionary<string, HashSet<string>> _userSessions = new();
     private readonly ReaderWriterLockSlim _lock = new();
-    private readonly ILogger<InMemoryConversationService> _logger;
-
-    public InMemoryConversationService(ILogger<InMemoryConversationService> logger)
-    {
-        _logger = logger;
-    }
+    private readonly ILogger<InMemoryConversationService> _logger = logger;
 
     public Task<IEnumerable<ChatMessage>> GetConversationHistoryAsync(string sessionId, int maxMessages = 20)
     {
@@ -32,7 +27,7 @@ public class InMemoryConversationService : IConversationMemoryService
             }
 
             _logger.LogInformation("No conversation history found for session {SessionId}", sessionId);
-            return Task.FromResult<IEnumerable<ChatMessage>>(Enumerable.Empty<ChatMessage>());
+            return Task.FromResult<IEnumerable<ChatMessage>>([]);
         }
         finally
         {
@@ -53,7 +48,7 @@ public class InMemoryConversationService : IConversationMemoryService
             // Add message to conversation
             _conversations.AddOrUpdate(
                 message.SessionId,
-                new List<ChatMessage> { message },
+                [message],
                 (key, existingMessages) =>
                 {
                     existingMessages.Add(message);
@@ -65,7 +60,7 @@ public class InMemoryConversationService : IConversationMemoryService
             {
                 _userSessions.AddOrUpdate(
                     message.UserId,
-                    new HashSet<string> { message.SessionId },
+                    [message.SessionId],
                     (key, existingSessions) =>
                     {
                         existingSessions.Add(message.SessionId);
@@ -73,7 +68,7 @@ public class InMemoryConversationService : IConversationMemoryService
                     });
             }
 
-            _logger.LogInformation("Added message to session {SessionId} for user {UserId}", 
+            _logger.LogInformation("Added message to session {SessionId} for user {UserId}",
                 message.SessionId, message.UserId);
 
             return Task.CompletedTask;
@@ -120,10 +115,10 @@ public class InMemoryConversationService : IConversationMemoryService
         {
             if (_userSessions.TryGetValue(userId, out var sessions))
             {
-                return Task.FromResult<IEnumerable<string>>(sessions.ToList());
+                return Task.FromResult<IEnumerable<string>>([.. sessions]);
             }
 
-            return Task.FromResult<IEnumerable<string>>(Enumerable.Empty<string>());
+            return Task.FromResult<IEnumerable<string>>([]);
         }
         finally
         {
@@ -151,7 +146,7 @@ public class InMemoryConversationService : IConversationMemoryService
             foreach (var sessionId in sessionsToRemove)
             {
                 _conversations.TryRemove(sessionId, out var removedMessages);
-                
+
                 // Also clean up user sessions
                 var userId = removedMessages?.FirstOrDefault()?.UserId;
                 if (!string.IsNullOrEmpty(userId) && _userSessions.TryGetValue(userId, out var sessions))
@@ -164,7 +159,7 @@ public class InMemoryConversationService : IConversationMemoryService
                 }
             }
 
-            _logger.LogInformation("Cleaned up {Count} old conversations older than {MaxAge}", 
+            _logger.LogInformation("Cleaned up {Count} old conversations older than {MaxAge}",
                 sessionsToRemove.Count, maxAge);
 
             return Task.CompletedTask;
@@ -179,4 +174,4 @@ public class InMemoryConversationService : IConversationMemoryService
     {
         _lock?.Dispose();
     }
-} 
+}

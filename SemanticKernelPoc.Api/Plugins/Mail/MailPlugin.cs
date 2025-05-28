@@ -7,15 +7,10 @@ using SemanticKernelPoc.Api.Services.Graph;
 
 namespace SemanticKernelPoc.Api.Plugins.Mail;
 
-public class MailPlugin : BaseGraphPlugin
+public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) : BaseGraphPlugin(graphService, logger)
 {
-    public MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
-        : base(graphService, logger)
-    {
-    }
-
     [KernelFunction, Description("Get recent emails (simplified)")]
-    public async Task<string> GetRecentEmails(Kernel kernel, 
+    public async Task<string> GetRecentEmails(Kernel kernel,
         [Description("Number of recent emails to retrieve (default 10)")] int count = 10)
     {
         try
@@ -34,20 +29,20 @@ public class MailPlugin : BaseGraphPlugin
             var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
             {
                 requestConfig.QueryParameters.Top = Math.Min(count, 10);
-                requestConfig.QueryParameters.Orderby = new[] { "receivedDateTime desc" };
-                requestConfig.QueryParameters.Select = new[] { "subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview" };
+                requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
+                requestConfig.QueryParameters.Select = ["subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview"];
             });
 
             if (messages?.Value?.Any() == true)
             {
                 var emailList = messages.Value.Select(msg => new
                 {
-                    Subject = msg.Subject,
+                    msg.Subject,
                     From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
                     ReceivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
                     IsRead = msg.IsRead ?? false,
                     Importance = msg.Importance?.ToString() ?? "Normal",
-                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview.Substring(0, 100) + "..." : msg.BodyPreview
+                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview[..100] + "..." : msg.BodyPreview
                 });
 
                 return $"Recent emails for {userName}:\n" +
@@ -89,24 +84,22 @@ public class MailPlugin : BaseGraphPlugin
                     ContentType = BodyType.Text,
                     Content = body
                 },
-                ToRecipients = new List<Recipient>
-                {
-                    new Recipient
-                    {
+                ToRecipients =
+                [
+                    new() {
                         EmailAddress = new EmailAddress
                         {
                             Address = toEmail
                         }
                     }
+                ],
+                // Set importance
+                Importance = importance.ToLower() switch
+                {
+                    "high" => Microsoft.Graph.Models.Importance.High,
+                    "low" => Microsoft.Graph.Models.Importance.Low,
+                    _ => Microsoft.Graph.Models.Importance.Normal
                 }
-            };
-
-            // Set importance
-            message.Importance = importance.ToLower() switch
-            {
-                "high" => Microsoft.Graph.Models.Importance.High,
-                "low" => Microsoft.Graph.Models.Importance.Low,
-                _ => Microsoft.Graph.Models.Importance.Normal
             };
 
             // Create draft
@@ -179,17 +172,16 @@ public class MailPlugin : BaseGraphPlugin
                     ContentType = BodyType.Text,
                     Content = body
                 },
-                ToRecipients = new List<Recipient>
-                {
-                    new Recipient
-                    {
+                ToRecipients =
+                [
+                    new() {
                         EmailAddress = new EmailAddress
                         {
                             Address = toEmail.Trim(),
                             Name = toEmail.Trim()
                         }
                     }
-                }
+                ]
             };
 
             // Add CC recipients if provided
@@ -232,19 +224,19 @@ public class MailPlugin : BaseGraphPlugin
 
             // Verify the email was sent by checking sent items
             var wasSent = await VerifyEmailSent(graphClient, subject, toEmail);
-            
+
             var result = $"✅ Email sent successfully for {userName}!\n" +
                         $"📧 To: {toEmail}\n" +
                         $"📝 Subject: {subject}\n" +
                         $"🔗 Importance: {importance}\n";
-            
+
             if (!string.IsNullOrWhiteSpace(ccEmails))
             {
                 result += $"📋 CC: {ccEmails}\n";
             }
-            
+
             result += wasSent ? "✅ Verified: Email appears in Sent Items" : "⚠️ Note: Could not verify delivery (check Sent Items manually)";
-            
+
             return result;
         }
         catch (Exception ex)
@@ -253,7 +245,7 @@ public class MailPlugin : BaseGraphPlugin
         }
     }
 
-    private bool IsValidEmail(string email)
+    private static bool IsValidEmail(string email)
     {
         try
         {
@@ -266,19 +258,19 @@ public class MailPlugin : BaseGraphPlugin
         }
     }
 
-    private async Task<bool> VerifyEmailSent(GraphServiceClient graphClient, string subject, string toEmail)
+    private static async Task<bool> VerifyEmailSent(GraphServiceClient graphClient, string subject, string toEmail)
     {
         try
         {
             var sentItems = await graphClient.Me.MailFolders["SentItems"].Messages.GetAsync(requestConfig =>
             {
                 requestConfig.QueryParameters.Top = 10;
-                requestConfig.QueryParameters.Orderby = new[] { "sentDateTime desc" };
+                requestConfig.QueryParameters.Orderby = ["sentDateTime desc"];
                 requestConfig.QueryParameters.Filter = $"subject eq '{subject.Replace("'", "''")}'";
             });
 
-            return sentItems?.Value?.Any(msg => 
-                msg.ToRecipients?.Any(recipient => 
+            return sentItems?.Value?.Any(msg =>
+                msg.ToRecipients?.Any(recipient =>
                     recipient.EmailAddress?.Address?.Equals(toEmail, StringComparison.OrdinalIgnoreCase) == true) == true) == true;
         }
         catch
@@ -314,20 +306,20 @@ public class MailPlugin : BaseGraphPlugin
             {
                 requestConfig.QueryParameters.Search = $"\"{searchQuery}\"";
                 requestConfig.QueryParameters.Top = Math.Min(maxResults, 10);
-                requestConfig.QueryParameters.Orderby = new[] { "receivedDateTime desc" };
-                requestConfig.QueryParameters.Select = new[] { "subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview" };
+                requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
+                requestConfig.QueryParameters.Select = ["subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview"];
             });
 
             if (messages?.Value?.Any() == true)
             {
                 var emailList = messages.Value.Select(msg => new
                 {
-                    Subject = msg.Subject,
+                    msg.Subject,
                     From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
                     ReceivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
                     IsRead = msg.IsRead ?? false,
                     Importance = msg.Importance?.ToString() ?? "Normal",
-                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview.Substring(0, 100) + "..." : msg.BodyPreview,
+                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview[..100] + "..." : msg.BodyPreview,
                     MatchReason = "Content or Subject"
                 });
 
@@ -457,23 +449,22 @@ public class MailPlugin : BaseGraphPlugin
                         ContentType = BodyType.Text,
                         Content = "This is a test draft created to check permissions. Please delete."
                     },
-                    ToRecipients = new List<Recipient>
-                    {
-                        new Recipient
-                        {
+                    ToRecipients =
+                    [
+                        new() {
                             EmailAddress = new EmailAddress
                             {
                                 Address = "test@example.com"
                             }
                         }
-                    }
+                    ]
                 };
 
                 var draft = await graphClient.Me.Messages.PostAsync(testDraft);
                 if (draft?.Id != null)
                 {
                     results.Add($"✅ Draft Creation: Can create drafts (created draft ID: {draft.Id})");
-                    
+
                     // Clean up the test draft
                     try
                     {
@@ -493,8 +484,8 @@ public class MailPlugin : BaseGraphPlugin
 
             // Test 5: Check if we can determine send permissions
             results.Add("\n📊 PERMISSION ANALYSIS:");
-            
-            if (results.Any(r => r.Contains("Mail Read Access") && r.Contains("✅")))
+
+            if (results.Any(r => r.Contains("Mail Read Access") && r.Contains('✅')))
             {
                 results.Add("✅ Mail.Read permission: GRANTED");
             }
@@ -503,7 +494,7 @@ public class MailPlugin : BaseGraphPlugin
                 results.Add("❌ Mail.Read permission: DENIED or INSUFFICIENT");
             }
 
-            if (results.Any(r => r.Contains("Draft Creation") && r.Contains("✅")))
+            if (results.Any(r => r.Contains("Draft Creation") && r.Contains('✅')))
             {
                 results.Add("✅ Mail.ReadWrite permission: LIKELY GRANTED");
                 results.Add("⚠️ Mail.Send permission: UNKNOWN (requires actual send test)");
@@ -533,13 +524,4 @@ public class MailPlugin : BaseGraphPlugin
         // Use the injected GraphService to create client with On-Behalf-Of flow
         return await _graphService.CreateClientAsync(userAccessToken);
     }
-
-    private GraphServiceClient CreateGraphClient(string userAccessToken)
-    {
-        var httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.Authorization = 
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", userAccessToken);
-        
-        return new GraphServiceClient(httpClient);
-    }
-} 
+}

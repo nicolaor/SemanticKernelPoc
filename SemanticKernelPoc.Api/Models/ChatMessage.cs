@@ -9,4 +9,4 @@ public class ChatMessage
     public DateTime Timestamp { get; set; }
     public bool IsAiResponse { get; set; } = false;
     public string SessionId { get; set; } = string.Empty;
-} 
+}

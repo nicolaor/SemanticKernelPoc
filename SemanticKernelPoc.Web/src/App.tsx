@@ -29,7 +29,7 @@ function App() {
         textareaRef.current?.focus();
         setShouldFocus(false);
       }, 100);
-      
+
       return () => clearTimeout(timer);
     }
   }, [shouldFocus, isLoading]);
@@ -40,7 +40,7 @@ function App() {
       const timer = setTimeout(() => {
         textareaRef.current?.focus();
       }, 50);
-      
+
       return () => clearTimeout(timer);
     }
   }, [isLoading, userProfile]);
@@ -50,7 +50,7 @@ function App() {
     const handleRedirectResponse = async () => {
       try {
         // Only handle redirect if MSAL is properly initialized
-        if (instance && typeof instance.handleRedirectPromise === 'function') {
+        if (instance && typeof instance.handleRedirectPromise === "function") {
           const response = await instance.handleRedirectPromise();
           if (response) {
             console.log("Authentication successful");
@@ -66,7 +66,7 @@ function App() {
 
   const handleLogin = async () => {
     try {
-      const response = await instance.loginPopup(loginRequest);
+      await instance.loginPopup(loginRequest);
       console.log("Login successful");
     } catch (error) {
       console.error("Login failed:", error);
@@ -79,25 +79,17 @@ function App() {
     }
   };
 
-  const handleRedirectLogin = async () => {
-    try {
-      await instance.loginRedirect(loginRequest);
-    } catch (error) {
-      console.error("Redirect login failed:", error);
-    }
-  };
-
   const handleLogout = () => {
-    instance.logoutPopup().catch(error => {
+    instance.logoutPopup().catch((error) => {
       console.error("Logout failed:", error);
     });
   };
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !userProfile || isLoading) return;
-    
+
     console.log(`Sending message: "${newMessage}"`);
-    
+
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       content: newMessage,
@@ -121,7 +113,7 @@ function App() {
 
       const response = await instance.acquireTokenSilent({
         ...loginRequest,
-        account: accounts[0]
+        account: accounts[0],
       });
 
       if (!response.accessToken) {
@@ -130,22 +122,21 @@ function App() {
 
       // Send message to AI
       const aiResponse = await apiService.sendMessage(userMessage, response.accessToken);
-      
+
       // Add AI response to messages
       setMessages((prev) => [...prev, aiResponse]);
-      
     } catch (error) {
       console.error("Failed to send message:", error);
-      
+
       // Determine error message based on error type
       let errorContent = "Sorry, I'm having trouble responding right now. Please try again later.";
-      
+
       if (error instanceof ApiConnectionError) {
         errorContent = `🔌 **Connection Error**\n\n${error.message}\n\nPlease start the backend API server and try again.`;
       } else if (error instanceof Error) {
         errorContent = `❌ **Error**\n\n${error.message}`;
       }
-      
+
       // Add error message
       const errorMessage: ChatMessage = {
         id: Date.now().toString() + "_error",
@@ -155,7 +146,7 @@ function App() {
         timestamp: new Date().toISOString(),
         isAiResponse: true,
       };
-      
+
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
@@ -174,54 +165,42 @@ function App() {
   return (
     <div
       className="h-screen flex flex-col overflow-hidden"
-      style={{ 
-        background: 'var(--bg-primary)',
-        color: 'var(--text-primary)'
+      style={{
+        background: "var(--bg-primary)",
+        color: "var(--text-primary)",
       }}
     >
-      <nav 
+      <nav
         className="shadow-lg"
-        style={{ 
-          background: 'var(--nav-bg)',
-          borderBottom: '1px solid var(--border-primary)'
+        style={{
+          background: "var(--nav-bg)",
+          borderBottom: "1px solid var(--border-primary)",
         }}
       >
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
             <div className="flex items-center space-x-3">
-              <div 
-                className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{ background: 'var(--accent-primary)' }}
-              >
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "var(--accent-primary)" }}>
                 <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h1 
-                className="text-2xl font-bold tracking-tight"
-                style={{ color: 'var(--text-primary)' }}
-              >
+              <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
                 Semantic Kernel Chat
               </h1>
             </div>
             <div className="flex items-center space-x-4">
               <AuthenticatedTemplate>
                 {profileLoading ? (
-                  <div style={{ color: 'var(--text-secondary)' }} className="text-sm">Loading...</div>
+                  <div style={{ color: "var(--text-secondary)" }} className="text-sm">
+                    Loading...
+                  </div>
                 ) : userProfile ? (
                   <div className="flex items-center space-x-3">
-                    <div 
-                      className="w-8 h-8 rounded-full flex items-center justify-center"
-                      style={{ background: 'var(--accent-primary)' }}
-                    >
-                      <span className="text-white text-xs font-bold">
-                        {userProfile.initials}
-                      </span>
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "var(--accent-primary)" }}>
+                      <span className="text-white text-xs font-bold">{userProfile.initials}</span>
                     </div>
-                    <span 
-                      className="text-sm font-medium"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
+                    <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
                       {userProfile.displayName}
                     </span>
                   </div>
@@ -229,24 +208,18 @@ function App() {
                 <button
                   onClick={handleLogout}
                   className="px-5 py-2 text-sm font-semibold rounded-lg text-white transition-all duration-200"
-                  style={{ 
-                    background: 'var(--accent-primary)',
-                    border: '1px solid var(--accent-secondary)'
+                  style={{
+                    background: "var(--accent-primary)",
+                    border: "1px solid var(--accent-secondary)",
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-secondary)'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent-primary)'}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-secondary)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent-primary)")}
                 >
                   Sign Out
                 </button>
               </AuthenticatedTemplate>
               <UnauthenticatedTemplate>
-                <button
-                  onClick={handleLogin}
-                  className="px-6 py-2 text-sm font-semibold rounded-lg text-white shadow-lg hover:shadow-xl transition-all duration-200"
-                  style={{ background: 'var(--accent-primary)' }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-secondary)'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent-primary)'}
-                >
+                <button onClick={handleLogin} className="px-6 py-2 text-sm font-semibold rounded-lg text-white shadow-lg hover:shadow-xl transition-all duration-200" style={{ background: "var(--accent-primary)" }} onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-secondary)")} onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent-primary)")}>
                   Sign In
                 </button>
               </UnauthenticatedTemplate>
@@ -259,24 +232,15 @@ function App() {
         <UnauthenticatedTemplate>
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-md">
-              <div 
-                className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"
-                style={{ background: 'var(--accent-primary)' }}
-              >
+              <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6" style={{ background: "var(--accent-primary)" }}>
                 <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7z" />
                 </svg>
               </div>
-              <h2 
-                className="text-3xl font-bold mb-4"
-                style={{ color: 'var(--text-primary)' }}
-              >
+              <h2 className="text-3xl font-bold mb-4" style={{ color: "var(--text-primary)" }}>
                 Welcome to Semantic Kernel Chat
               </h2>
-              <p 
-                className="text-lg mb-8"
-                style={{ color: 'var(--text-secondary)' }}
-              >
+              <p className="text-lg mb-8" style={{ color: "var(--text-secondary)" }}>
                 Sign in with your Azure AD account to start chatting with your AI assistant.
               </p>
             </div>
@@ -285,12 +249,12 @@ function App() {
         <AuthenticatedTemplate>
           {/* API Connection Error Banner */}
           {isApiConnectionError && profileError && (
-            <div 
+            <div
               className="w-full max-w-5xl mb-4 p-4 rounded-lg border-l-4"
               style={{
-                background: 'var(--bg-secondary)',
-                borderLeftColor: '#ef4444',
-                border: '1px solid var(--border-primary)'
+                background: "var(--bg-secondary)",
+                borderLeftColor: "#ef4444",
+                border: "1px solid var(--border-primary)",
               }}
             >
               <div className="flex items-start space-x-3">
@@ -300,23 +264,14 @@ function App() {
                   </svg>
                 </div>
                 <div className="flex-1">
-                  <h3 
-                    className="text-sm font-semibold text-red-800"
-                    style={{ color: '#dc2626' }}
-                  >
+                  <h3 className="text-sm font-semibold text-red-800" style={{ color: "#dc2626" }}>
                     Backend API Connection Failed
                   </h3>
-                  <p 
-                    className="text-sm mt-1"
-                    style={{ color: 'var(--text-secondary)' }}
-                  >
+                  <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
                     {profileError}
                   </p>
                   <div className="mt-2">
-                    <p 
-                      className="text-xs"
-                      style={{ color: 'var(--text-tertiary)' }}
-                    >
+                    <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
                       💡 <strong>To fix this:</strong> Start the backend API server by running the .NET project on http://localhost:5040
                     </p>
                   </div>
@@ -324,98 +279,73 @@ function App() {
               </div>
             </div>
           )}
-          <div 
+          <div
             className="w-full max-w-5xl flex flex-col backdrop-blur-sm shadow-2xl rounded-3xl overflow-hidden"
-            style={{ 
-              background: 'var(--card-bg)',
-              border: '1px solid var(--border-primary)',
-              height: 'calc(100vh - 6rem)' // Optimized: viewport minus nav (4rem) and padding (2rem)
+            style={{
+              background: "var(--card-bg)",
+              border: "1px solid var(--border-primary)",
+              height: "calc(100vh - 6rem)", // Optimized: viewport minus nav (4rem) and padding (2rem)
             }}
           >
-            <div 
+            <div
               className="px-4 py-2 flex-shrink-0"
-              style={{ 
-                background: 'var(--bg-secondary)',
-                borderBottom: '1px solid var(--border-primary)'
+              style={{
+                background: "var(--bg-secondary)",
+                borderBottom: "1px solid var(--border-primary)",
               }}
             >
-              <h2 
-                className="text-base font-semibold"
-                style={{ color: 'var(--text-primary)' }}
-              >
+              <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>
                 AI Assistant
               </h2>
-              <p 
-                className="text-xs"
-                style={{ color: 'var(--text-secondary)' }}
-              >
+              <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
                 Powered by Semantic Kernel
               </p>
             </div>
-            <div className={`flex-1 px-4 py-1 ${messages.length === 0 ? 'overflow-hidden' : 'overflow-y-auto space-y-3'}`}>
+            <div className={`flex-1 px-4 py-1 ${messages.length === 0 ? "overflow-hidden" : "overflow-y-auto space-y-3"}`}>
               {messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
-                    <div 
-                      className="w-6 h-6 rounded-full flex items-center justify-center mx-auto mb-1"
-                      style={{ background: 'var(--accent-primary)' }}
-                    >
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center mx-auto mb-1" style={{ background: "var(--accent-primary)" }}>
                       <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zM9 9h2v2H9V9z" />
                       </svg>
                     </div>
-                    <p 
-                      className="text-sm font-medium"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      Welcome{userProfile ? `, ${userProfile.givenName || userProfile.displayName}` : ''}!
+                    <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                      Welcome
+                      {userProfile ? `, ${userProfile.givenName || userProfile.displayName}` : ""}!
                     </p>
-                    <p 
-                      className="text-xs"
-                      style={{ color: 'var(--text-secondary)' }}
-                    >
+                    <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
                       Start chatting with your AI assistant
                     </p>
                   </div>
                 </div>
               ) : (
                 messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex ${message.isAiResponse ? "justify-start" : "justify-end"}`}
-                  >
+                  <div key={message.id} className={`flex ${message.isAiResponse ? "justify-start" : "justify-end"}`}>
                     <div className={`flex flex-col max-w-[75%] ${message.isAiResponse ? "items-start" : "items-end"}`}>
                       <div className={`flex items-center space-x-2 mb-1 ${message.isAiResponse ? "" : "flex-row-reverse space-x-reverse"}`}>
-                        <span 
-                          className="text-xs font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
+                        <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
                           {message.userName}
                         </span>
-                        <span 
-                          className="text-xs"
-                          style={{ color: 'var(--text-tertiary)' }}
-                        >
+                        <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
                           {new Date(message.timestamp).toLocaleTimeString()}
                         </span>
                       </div>
                       <div className={`flex items-start space-x-2 ${message.isAiResponse ? "" : "flex-row-reverse space-x-reverse"}`}>
-                        <div 
+                        <div
                           className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
-                          style={{ 
-                            background: message.isAiResponse ? 'var(--accent-primary)' : 'var(--accent-secondary)'
+                          style={{
+                            background: message.isAiResponse ? "var(--accent-primary)" : "var(--accent-secondary)",
                           }}
                         >
-                          <span className="text-white text-xs font-bold">
-                            {message.isAiResponse ? "AI" : (userProfile?.initials || "U")}
-                          </span>
+                          <span className="text-white text-xs font-bold">{message.isAiResponse ? "AI" : userProfile?.initials || "U"}</span>
                         </div>
                         <div
                           className="px-3 py-2 rounded-2xl shadow-md text-sm"
                           style={{
-                            background: message.isAiResponse ? 'var(--card-bg)' : 'var(--accent-primary)',
-                            color: message.isAiResponse ? 'var(--text-primary)' : '#ffffff',
-                            border: message.isAiResponse ? '1px solid var(--border-primary)' : 'none'
+                            background: message.isAiResponse ? "var(--card-bg)" : "var(--accent-primary)",
+                            color: message.isAiResponse ? "var(--text-primary)" : "#ffffff",
+                            border: message.isAiResponse ? "1px solid var(--border-primary)" : "none",
                           }}
                         >
                           <MessageRenderer content={message.content} isAiResponse={message.isAiResponse} />
@@ -426,54 +356,48 @@ function App() {
                 ))
               )}
               {isLoading && (
-                                  <div className="flex justify-start">
-                    <div className="flex flex-col max-w-[75%] items-start">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <span 
-                          className="text-xs font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          AI Assistant
-                        </span>
-                        <span 
-                          className="text-xs"
-                          style={{ color: 'var(--text-tertiary)' }}
-                        >
-                          {new Date().toLocaleTimeString()}
-                        </span>
+                <div className="flex justify-start">
+                  <div className="flex flex-col max-w-[75%] items-start">
+                    <div className="flex items-center space-x-2 mb-1">
+                      <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                        AI Assistant
+                      </span>
+                      <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                        {new Date().toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "var(--accent-primary)" }}>
+                        <span className="text-white text-xs font-bold">AI</span>
                       </div>
-                      <div className="flex items-start space-x-2">
-                        <div 
-                          className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
-                          style={{ background: 'var(--accent-primary)' }}
-                        >
-                          <span className="text-white text-xs font-bold">AI</span>
-                        </div>
-                        <div 
-                          className="px-3 py-2 rounded-2xl shadow-md text-sm"
-                          style={{
-                            background: 'var(--card-bg)',
-                            color: 'var(--text-primary)',
-                            border: '1px solid var(--border-primary)'
-                          }}
-                        >
-                                                  <div className="flex items-center space-x-2">
-                            <div className="flex space-x-1">
-                              <div 
-                                className="w-2 h-2 rounded-full animate-bounce"
-                                style={{ background: 'var(--accent-primary)' }}
-                              ></div>
-                              <div 
-                                className="w-2 h-2 rounded-full animate-bounce"
-                                style={{ background: 'var(--accent-primary)', animationDelay: "0.1s" }}
-                              ></div>
-                              <div 
-                                className="w-2 h-2 rounded-full animate-bounce"
-                                style={{ background: 'var(--accent-primary)', animationDelay: "0.2s" }}
-                              ></div>
-                            </div>
-                            <span style={{ color: 'var(--text-secondary)' }}>AI is thinking...</span>
+                      <div
+                        className="px-3 py-2 rounded-2xl shadow-md text-sm"
+                        style={{
+                          background: "var(--card-bg)",
+                          color: "var(--text-primary)",
+                          border: "1px solid var(--border-primary)",
+                        }}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <div className="flex space-x-1">
+                            <div className="w-2 h-2 rounded-full animate-bounce" style={{ background: "var(--accent-primary)" }}></div>
+                            <div
+                              className="w-2 h-2 rounded-full animate-bounce"
+                              style={{
+                                background: "var(--accent-primary)",
+                                animationDelay: "0.1s",
+                              }}
+                            ></div>
+                            <div
+                              className="w-2 h-2 rounded-full animate-bounce"
+                              style={{
+                                background: "var(--accent-primary)",
+                                animationDelay: "0.2s",
+                              }}
+                            ></div>
                           </div>
+                          <span style={{ color: "var(--text-secondary)" }}>AI is thinking...</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -481,11 +405,11 @@ function App() {
               )}
               <div ref={chatEndRef} />
             </div>
-            <div 
+            <div
               className="px-4 py-2 flex-shrink-0"
-              style={{ 
-                background: 'var(--bg-secondary)',
-                borderTop: '1px solid var(--border-primary)'
+              style={{
+                background: "var(--bg-secondary)",
+                borderTop: "1px solid var(--border-primary)",
               }}
             >
               <div className="flex items-end gap-2">
@@ -496,12 +420,12 @@ function App() {
                   placeholder={isLoading ? "AI is responding..." : "Type your message..."}
                   rows={1}
                   className="flex-1 resize-none px-3 py-2 rounded-2xl backdrop-blur-sm focus:outline-none focus:ring-2 shadow-sm text-sm"
-                  style={{ 
-                    minHeight: 40, 
+                  style={{
+                    minHeight: 40,
                     maxHeight: 100,
-                    background: 'var(--input-bg)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-primary)'
+                    background: "var(--input-bg)",
+                    color: "var(--text-primary)",
+                    border: "1px solid var(--border-primary)",
                   }}
                   disabled={!userProfile || isLoading}
                   ref={textareaRef}
@@ -509,13 +433,13 @@ function App() {
                 <button
                   onClick={handleSendMessage}
                   className="flex items-center justify-center p-2 rounded-2xl text-white font-semibold shadow-lg hover:shadow-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{ 
-                    minHeight: 40, 
+                  style={{
+                    minHeight: 40,
                     minWidth: 40,
-                    background: 'var(--accent-primary)'
+                    background: "var(--accent-primary)",
                   }}
-                  onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.background = 'var(--accent-secondary)')}
-                  onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.background = 'var(--accent-primary)')}
+                  onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.background = "var(--accent-secondary)")}
+                  onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.background = "var(--accent-primary)")}
                   disabled={!newMessage.trim() || !userProfile || isLoading}
                   aria-label="Send"
                 >

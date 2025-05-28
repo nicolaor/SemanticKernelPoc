@@ -26,14 +26,14 @@ public class SharePointSearchService : ISharePointSearchService
     private readonly IConfidentialClientApplication _clientApp;
 
     public SharePointSearchService(
-        HttpClient httpClient, 
+        HttpClient httpClient,
         ILogger<SharePointSearchService> logger,
         IConfiguration configuration)
     {
         _httpClient = httpClient;
         _logger = logger;
         _configuration = configuration;
-        
+
         // Initialize MSAL client app for On-Behalf-Of flow - this needs tenant info from config for the app registration
         _clientApp = ConfidentialClientApplicationBuilder
             .Create(_configuration["AzureAd:ClientId"])
@@ -48,11 +48,11 @@ public class SharePointSearchService : ISharePointSearchService
         {
             // Get tenant information using Graph API instead of token parsing
             var tenantInfo = await GetTenantInfoFromGraphAsync(userToken);
-            
+
             var sharePointAccessToken = await GetSharePointTokenAsync(userToken, tenantInfo);
             var searchQuery = BuildSearchQuery(request);
             var searchResults = await ExecuteSearchAsync(sharePointAccessToken, searchQuery, tenantInfo);
-            
+
             return ParseSearchResults(searchResults);
         }
         catch (Exception ex)
@@ -68,19 +68,19 @@ public class SharePointSearchService : ISharePointSearchService
         {
             // First, get a Graph API token using the user token
             var graphToken = await GetGraphTokenAsync(userToken);
-            
+
             // Call Graph API to get organization information
             var orgInfo = await GetOrganizationInfoAsync(graphToken);
-            
+
             var tenantInfo = new TenantInfo
             {
                 TenantId = orgInfo.TenantId,
                 SharePointRootUrl = orgInfo.SharePointRootUrl
             };
-            
-            _logger.LogInformation("Retrieved tenant info from Graph API - TenantId: {TenantId}, SharePointUrl: {SharePointUrl}", 
+
+            _logger.LogInformation("Retrieved tenant info from Graph API - TenantId: {TenantId}, SharePointUrl: {SharePointUrl}",
                 tenantInfo.TenantId, tenantInfo.SharePointRootUrl);
-            
+
             return tenantInfo;
         }
         catch (Exception ex)
@@ -126,14 +126,14 @@ public class SharePointSearchService : ISharePointSearchService
 
             var response = await _httpClient.SendAsync(request);
             var content = await response.Content.ReadAsStringAsync();
-            
+
             _logger.LogInformation("Graph API organization response: {Content}", content);
-            
+
             response.EnsureSuccessStatusCode();
 
             var jsonDocument = JsonDocument.Parse(content);
             var organizations = jsonDocument.RootElement.GetProperty("value").EnumerateArray();
-            
+
             if (!organizations.Any())
             {
                 throw new InvalidOperationException("No organization found in Graph API response");
@@ -141,10 +141,10 @@ public class SharePointSearchService : ISharePointSearchService
 
             var org = organizations.First();
             var tenantId = org.GetProperty("id").GetString();
-            
+
             // Try to get SharePoint root URL from various properties
             string sharePointRootUrl = "";
-            
+
             // Method 1: Try to get from verifiedDomains (look for the primary domain)
             if (org.TryGetProperty("verifiedDomains", out var verifiedDomains))
             {
@@ -163,13 +163,13 @@ public class SharePointSearchService : ISharePointSearchService
                     }
                 }
             }
-            
+
             // Method 2: If we couldn't find it from domains, make a direct call to get SharePoint admin URL
             if (string.IsNullOrEmpty(sharePointRootUrl))
             {
                 sharePointRootUrl = await GetSharePointRootUrlFromSPOServiceAsync(graphToken);
             }
-            
+
             if (string.IsNullOrEmpty(sharePointRootUrl))
             {
                 throw new InvalidOperationException("Could not determine SharePoint root URL from Graph API");
@@ -195,19 +195,19 @@ public class SharePointSearchService : ISharePointSearchService
 
             var response = await _httpClient.SendAsync(request);
             var content = await response.Content.ReadAsStringAsync();
-            
+
             _logger.LogInformation("Graph API root site response: {Content}", content);
-            
+
             if (response.IsSuccessStatusCode)
             {
                 var jsonDocument = JsonDocument.Parse(content);
                 var webUrl = jsonDocument.RootElement.GetProperty("webUrl").GetString();
-                
+
                 // Extract the root URL (e.g., from "https://contoso.sharepoint.com/sites/root" get "https://contoso.sharepoint.com")
                 var uri = new Uri(webUrl);
                 return $"{uri.Scheme}://{uri.Host}";
             }
-            
+
             return "";
         }
         catch (Exception ex)
@@ -263,32 +263,32 @@ public class SharePointSearchService : ISharePointSearchService
         // Build the search URL for GET request using the dynamically retrieved SharePoint URL
         var encodedQuery = Uri.EscapeDataString(query);
         var searchUrl = $"{tenantInfo.SharePointRootUrl}/_api/search/query?querytext='{encodedQuery}'&rowlimit=50";
-        
+
         _logger.LogInformation("=== SHAREPOINT GET REQUEST ===");
         _logger.LogInformation("URL: {SearchUrl}", searchUrl);
         _logger.LogInformation("Query: {Query}", query);
         _logger.LogInformation("SharePoint Root URL: {SharePointUrl} (retrieved from Graph API)", tenantInfo.SharePointRootUrl);
-        
+
         // Use the injected HttpClient from HttpClientFactory
         _httpClient.DefaultRequestHeaders.Clear();
         _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {accessToken}");
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json;odata=verbose");
-        
+
         _logger.LogInformation("Making HTTP GET request using injected HttpClient...");
-        
+
         try
         {
             var response = await _httpClient.GetAsync(searchUrl);
             var content = await response.Content.ReadAsStringAsync();
-            
+
             _logger.LogInformation("Response Status: {StatusCode}", response.StatusCode);
             _logger.LogInformation("Response length: {Length}", content.Length);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("SharePoint API returned error. Status: {StatusCode}, Content: {Content}", response.StatusCode, content);
             }
-            
+
             response.EnsureSuccessStatusCode();
             return JsonSerializer.Deserialize<dynamic>(content);
         }
@@ -315,7 +315,7 @@ public class SharePointSearchService : ISharePointSearchService
         try
         {
             JsonElement jsonElement;
-            
+
             // Handle both JsonElement and string cases
             if (searchResults is JsonElement element)
             {
@@ -331,12 +331,12 @@ public class SharePointSearchService : ISharePointSearchService
                 var serializedJson = JsonSerializer.Serialize(searchResults);
                 jsonElement = JsonSerializer.Deserialize<JsonElement>(serializedJson);
             }
-            
+
             _logger.LogInformation("Parsing SharePoint search results from JsonElement");
-            
+
             // Try different possible response structures
             JsonElement? resultsElement = null;
-            
+
             // Try modern SharePoint REST API format
             if (jsonElement.TryGetProperty("PrimaryQueryResult", out var primaryResult) &&
                 primaryResult.TryGetProperty("RelevantResults", out var relevantResults) &&
@@ -359,7 +359,7 @@ public class SharePointSearchService : ISharePointSearchService
             }
             else
             {
-                _logger.LogWarning("Could not find results in expected format. Response structure: {Keys}", 
+                _logger.LogWarning("Could not find results in expected format. Response structure: {Keys}",
                     string.Join(", ", jsonElement.EnumerateObject().Select(p => p.Name)));
                 return response; // Return empty response
             }
@@ -369,17 +369,17 @@ public class SharePointSearchService : ISharePointSearchService
                 foreach (var row in resultsElement.Value.EnumerateArray())
                 {
                     var site = new SharePointSite();
-                    
+
                     if (row.TryGetProperty("Cells", out var cells))
                     {
                         foreach (var cell in cells.EnumerateArray())
                         {
-                            if (cell.TryGetProperty("Key", out var keyProp) && 
+                            if (cell.TryGetProperty("Key", out var keyProp) &&
                                 cell.TryGetProperty("Value", out var valueProp))
                             {
                                 var key = keyProp.GetString();
                                 var value = valueProp.GetString();
-                                
+
                                 switch (key)
                                 {
                                     case "Title":
@@ -402,14 +402,14 @@ public class SharePointSearchService : ISharePointSearchService
                             }
                         }
                     }
-                    
+
                     // Only add sites that have at least a title or URL
                     if (!string.IsNullOrEmpty(site.Title) || !string.IsNullOrEmpty(site.Url))
                     {
                         response.Sites.Add(site);
                     }
                 }
-                
+
                 response.TotalResults = response.Sites.Count;
                 _logger.LogInformation("Successfully parsed {Count} SharePoint sites", response.TotalResults);
             }
@@ -421,4 +421,4 @@ public class SharePointSearchService : ISharePointSearchService
 
         return response;
     }
-} 
+}

@@ -14,7 +14,7 @@ public class GraphService : IGraphService
     {
         _logger = logger;
         _configuration = configuration;
-        
+
         // Initialize MSAL client app for On-Behalf-Of flow
         _clientApp = ConfidentialClientApplicationBuilder
             .Create(_configuration["AzureAd:ClientId"])
@@ -29,11 +29,11 @@ public class GraphService : IGraphService
         {
             // Use On-Behalf-Of flow to get Microsoft Graph token
             var graphToken = await GetGraphTokenAsync(userAccessToken);
-            
+
             var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = 
+            httpClient.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", graphToken);
-            
+
             return new GraphServiceClient(httpClient);
         }
         catch (Exception ex)
@@ -96,11 +96,11 @@ public class GraphService : IGraphService
         try
         {
             var client = await CreateClientAsync(accessToken);
-            
+
             // Test the connection by getting user profile
             var user = await client.Me.GetAsync();
             _logger.LogDebug("Successfully validated access for user {UserId} ({UserName})", userId, user?.DisplayName ?? userName);
-            
+
             return (true, null, client, userName);
         }
         catch (Exception ex)
@@ -109,4 +109,4 @@ public class GraphService : IGraphService
             return (false, $"Unable to access Microsoft Graph - authentication may have expired: {ex.Message}", null, userName);
         }
     }
-} 
+}

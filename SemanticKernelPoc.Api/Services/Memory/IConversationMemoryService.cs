@@ -28,4 +28,4 @@ public interface IConversationMemoryService
     /// Clean up old conversations (implementation specific)
     /// </summary>
     Task CleanupOldConversationsAsync(TimeSpan maxAge);
-} 
+}

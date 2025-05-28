@@ -4,16 +4,10 @@ using System.Text.Json;
 
 namespace SemanticKernelPoc.Api.Services.Graph;
 
-public abstract class BaseGraphPlugin
+public abstract class BaseGraphPlugin(IGraphService graphService, ILogger logger)
 {
-    protected readonly IGraphService _graphService;
-    protected readonly ILogger _logger;
-
-    protected BaseGraphPlugin(IGraphService graphService, ILogger logger)
-    {
-        _graphService = graphService;
-        _logger = logger;
-    }
+    protected readonly IGraphService _graphService = graphService;
+    protected readonly ILogger _logger = logger;
 
     /// <summary>
     /// Execute a Graph operation with standardized error handling
@@ -26,18 +20,18 @@ public abstract class BaseGraphPlugin
     {
         try
         {
-            var validation = await _graphService.ValidateUserAccessAsync(kernel);
-            if (!validation.IsValid)
+            var (IsValid, ErrorMessage, Client, UserName) = await _graphService.ValidateUserAccessAsync(kernel);
+            if (!IsValid)
             {
-                return validation.ErrorMessage ?? "Authentication failed";
+                return ErrorMessage ?? "Authentication failed";
             }
 
-            _logger.LogDebug("Executing {OperationName} for user {UserName}", operationName, validation.UserName);
+            _logger.LogDebug("Executing {OperationName} for user {UserName}", operationName, UserName);
 
-            var result = await operation(validation.Client!, validation.UserName);
-            var response = formatResponse(result, validation.UserName);
+            var result = await operation(Client!, UserName);
+            var response = formatResponse(result, UserName);
 
-            _logger.LogDebug("Successfully completed {OperationName} for user {UserName}", operationName, validation.UserName);
+            _logger.LogDebug("Successfully completed {OperationName} for user {UserName}", operationName, UserName);
             return response;
         }
         catch (Microsoft.Graph.Models.ODataErrors.ODataError odataEx)
@@ -76,7 +70,7 @@ public abstract class BaseGraphPlugin
     {
         var itemList = items.ToList();
         var countText = totalCount.HasValue ? $"({itemList.Count} of {totalCount} total)" : $"({itemList.Count} found)";
-        
+
         return $"{itemType} for {userName} {countText}:\n" +
                JsonSerializer.Serialize(itemList, new JsonSerializerOptions { WriteIndented = true });
     }
@@ -108,4 +102,4 @@ public abstract class BaseGraphPlugin
         }
         return response.TrimEnd();
     }
-} 
+}

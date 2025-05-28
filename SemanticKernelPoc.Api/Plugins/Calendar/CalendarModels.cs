@@ -47,4 +47,4 @@ public static class CalendarResponseFormats
         // Generate Microsoft To Do web link for the task
         return $"https://to-do.office.com/tasks/id/{taskId}/details";
     }
-} 
+}

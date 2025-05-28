@@ -12,7 +12,7 @@ class Program
     static async Task Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
-        
+
         // Configure logging for web server
         builder.Logging.AddConsole();
 
@@ -27,13 +27,13 @@ class Program
             .WithToolsFromAssembly();
 
         var app = builder.Build();
-        
+
         // Map MCP endpoints for HTTP/SSE transport
         app.MapMcp();
-        
+
         // Add health check endpoint
         app.MapGet("/health", () => "Healthy");
-        
+
         await app.RunAsync();
     }
-} 
+}

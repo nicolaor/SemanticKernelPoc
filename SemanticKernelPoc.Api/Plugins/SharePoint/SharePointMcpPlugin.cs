@@ -8,16 +8,10 @@ namespace SemanticKernelPoc.Api.Plugins.SharePoint;
 /// SharePoint plugin that uses Model Context Protocol (MCP) to search for CoffeeNet sites.
 /// This plugin provides AI-powered search capabilities for SharePoint sites with CN365TemplateId property.
 /// </summary>
-public class SharePointMcpPlugin
+public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<SharePointMcpPlugin> logger)
 {
-    private readonly IMcpClientService _mcpClientService;
-    private readonly ILogger<SharePointMcpPlugin> _logger;
-
-    public SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<SharePointMcpPlugin> logger)
-    {
-        _mcpClientService = mcpClientService;
-        _logger = logger;
-    }
+    private readonly IMcpClientService _mcpClientService = mcpClientService;
+    private readonly ILogger<SharePointMcpPlugin> _logger = logger;
 
     [KernelFunction("search_coffeenet_sites")]
     [Description("Search for CoffeeNet (CN365) sites in SharePoint. These are special workspace sites identified by the CN365TemplateId property.")]
@@ -32,13 +26,13 @@ public class SharePointMcpPlugin
         {
             // Extract user access token from kernel context
             var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            
+
             if (string.IsNullOrEmpty(userAccessToken))
             {
                 return "Error: User authentication required. Please ensure you are logged in.";
             }
 
-            _logger.LogInformation("Searching CoffeeNet sites with query: {Query}, createdAfter: {CreatedAfter}, createdBefore: {CreatedBefore}, maxResults: {MaxResults}", 
+            _logger.LogInformation("Searching CoffeeNet sites with query: {Query}, createdAfter: {CreatedAfter}, createdBefore: {CreatedBefore}, maxResults: {MaxResults}",
                 query, createdAfter, createdBefore, maxResults);
 
             // Validate max results
@@ -46,11 +40,11 @@ public class SharePointMcpPlugin
 
             var result = await _mcpClientService.SearchCoffeeNetSitesAsync(
                 userAccessToken,
-                query, 
-                createdAfter, 
-                createdBefore, 
+                query,
+                createdAfter,
+                createdBefore,
                 maxResults);
-            
+
             _logger.LogInformation("CoffeeNet sites search completed successfully");
             return result;
         }
@@ -68,8 +62,8 @@ public class SharePointMcpPlugin
         try
         {
             var isAvailable = await _mcpClientService.IsServerRunningAsync();
-            return isAvailable 
-                ? "MCP server is running and available for SharePoint search operations." 
+            return isAvailable
+                ? "MCP server is running and available for SharePoint search operations."
                 : "MCP server is not available. SharePoint search functionality may not work.";
         }
         catch (Exception ex)
@@ -90,19 +84,19 @@ public class SharePointMcpPlugin
         {
             // Extract user access token from kernel context
             var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            
+
             if (string.IsNullOrEmpty(userAccessToken))
             {
                 return "Error: User authentication required. Please ensure you are logged in.";
             }
-            
+
             _logger.LogInformation("Searching for recent CoffeeNet sites for last {DaysBack} days", daysBack);
-            
+
             var result = await _mcpClientService.SearchRecentCoffeeNetSitesAsync(
                 userAccessToken,
-                query, 
+                query,
                 daysBack);
-            
+
             return result;
         }
         catch (Exception ex)
@@ -123,7 +117,7 @@ public class SharePointMcpPlugin
         {
             // Extract user access token from kernel context
             var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            
+
             if (string.IsNullOrEmpty(userAccessToken))
             {
                 return "Error: User authentication required. Please ensure you are logged in.";
@@ -135,9 +129,9 @@ public class SharePointMcpPlugin
             }
 
             _logger.LogInformation("Searching CoffeeNet sites by keywords: {Keywords}", keywords);
-            
+
             var result = await _mcpClientService.FindCoffeeNetSitesByKeywordAsync(userAccessToken, keywords, Math.Min(maxResults, 500));
-            
+
             return result;
         }
         catch (Exception ex)
@@ -160,7 +154,7 @@ public class SharePointMcpPlugin
         {
             // Extract user access token from kernel context
             var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            
+
             if (string.IsNullOrEmpty(userAccessToken))
             {
                 return "Error: User authentication required. Please ensure you are logged in.";
@@ -181,13 +175,13 @@ public class SharePointMcpPlugin
                     _ when DateTime.TryParse(dateRange, out var date) => date,
                     _ => (DateTime?)null
                 };
-                
+
                 createdAfter = parsedDate?.ToString("yyyy-MM-dd");
             }
 
             // Combine natural query with keywords
-            var searchQuery = string.IsNullOrEmpty(keywords) 
-                ? naturalQuery 
+            var searchQuery = string.IsNullOrEmpty(keywords)
+                ? naturalQuery
                 : $"{naturalQuery} {keywords}";
 
             var result = await _mcpClientService.SearchCoffeeNetSitesAsync(
@@ -205,4 +199,4 @@ public class SharePointMcpPlugin
             return $"Error in advanced search: {ex.Message}";
         }
     }
-} 
+}

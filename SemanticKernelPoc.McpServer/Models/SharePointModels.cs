@@ -23,4 +23,4 @@ public class SharePointSite
     public DateTime Created { get; set; }
     public string TemplateId { get; set; } = string.Empty;
     public string WebTemplate { get; set; } = string.Empty;
-} 
+}
