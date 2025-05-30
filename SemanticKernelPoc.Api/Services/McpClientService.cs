@@ -1,8 +1,5 @@
-using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
-using System.Diagnostics;
 using System.Net.Security;
-using System.Security.Cryptography.X509Certificates;
 using System.Net;
 
 namespace SemanticKernelPoc.Api.Services;

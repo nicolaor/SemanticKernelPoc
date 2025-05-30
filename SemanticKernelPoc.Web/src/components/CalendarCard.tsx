@@ -9,8 +9,8 @@ interface AttendeeInfo {
 
 interface CalendarEvent {
   Subject: string;
-  Start: string;
-  End: string;
+  Start: string | null;
+  End: string | null;
   Location: string;
   Organizer: string;
   IsAllDay: boolean;
@@ -36,34 +36,76 @@ const CalendarCard: React.FC<CalendarCardProps> = ({ data }) => {
   const [showAttendees, setShowAttendees] = useState<string | null>(null);
   const [bubblePosition, setBubblePosition] = useState<"top" | "bottom">("bottom");
   const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
-  const formatDateTime = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return {
-      date: date.toLocaleDateString("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      }),
-      time: date.toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      }),
-    };
+  const formatDateTime = (dateStr: string | null | undefined) => {
+    if (!dateStr) {
+      return {
+        date: "Unknown Date",
+        time: "Unknown Time",
+      };
+    }
+    
+    try {
+      const date = new Date(dateStr);
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return {
+          date: "Invalid Date",
+          time: "Invalid Time",
+        };
+      }
+      
+      return {
+        date: date.toLocaleDateString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        }),
+        time: date.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        }),
+      };
+    } catch (error) {
+      return {
+        date: "Invalid Date",
+        time: "Invalid Time",
+      };
+    }
   };
 
-  const getEventDuration = (start: string, end: string) => {
-    const startDate = new Date(start);
-    const endDate = new Date(end);
-    const diffMs = endDate.getTime() - startDate.getTime();
-    const diffMins = Math.round(diffMs / (1000 * 60));
+  const getEventDuration = (start: string | null | undefined, end: string | null | undefined) => {
+    if (!start || !end) {
+      return "Unknown Duration";
+    }
+    
+    try {
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      
+      // Check if dates are valid
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return "Invalid Duration";
+      }
+      
+      const diffMs = endDate.getTime() - startDate.getTime();
+      
+      // Check for negative duration
+      if (diffMs < 0) {
+        return "Invalid Duration";
+      }
+      
+      const diffMins = Math.round(diffMs / (1000 * 60));
 
-    if (diffMins < 60) {
-      return `${diffMins}m`;
-    } else {
-      const hours = Math.floor(diffMins / 60);
-      const minutes = diffMins % 60;
-      return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+      if (diffMins < 60) {
+        return `${diffMins}m`;
+      } else {
+        const hours = Math.floor(diffMins / 60);
+        const minutes = diffMins % 60;
+        return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+      }
+    } catch (error) {
+      return "Invalid Duration";
     }
   };
 

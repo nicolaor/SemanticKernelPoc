@@ -22,6 +22,20 @@ interface NoteCardProps {
 }
 
 // Helper functions moved outside component for better performance
+const isTaskOverdue = (dueDateStr: string | undefined) => {
+  if (!dueDateStr) return false;
+  
+  try {
+    const dueDate = new Date(dueDateStr);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Reset time to start of day for accurate comparison
+    
+    return dueDate < today;
+  } catch {
+    return false;
+  }
+};
+
 const getPriorityIcon = (priority: string) => {
   switch (priority.toLowerCase()) {
     case "high":
@@ -126,6 +140,7 @@ const getNoteColor = (index: number) => {
 // Individual note item component for better performance
 const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note, index }) => {
   const noteColor = getNoteColor(index);
+  const isOverdue = isTaskOverdue(note.dueDate);
 
   return (
     <div
@@ -160,6 +175,19 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
             )}
 
             <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+              {/* Overdue Badge - Show prominently if task is overdue */}
+              {isOverdue && (
+                <span
+                  className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-red-600 text-white border border-red-600"
+                  title={`This task is overdue since ${note.dueDateFormatted}`}
+                >
+                  <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  OVERDUE
+                </span>
+              )}
+
               {/* Status Badge */}
               <span
                 className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium"
@@ -230,10 +258,19 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
           {/* Due Date */}
           {note.dueDateFormatted && (
             <div className="flex items-center">
-              <svg className="w-4 h-4 mr-2" style={{ color: "var(--text-tertiary)" }} fill="currentColor" viewBox="0 0 20 20">
+              <svg 
+                className="w-4 h-4 mr-2" 
+                style={{ color: "var(--text-tertiary)" }} 
+                fill="currentColor" 
+                viewBox="0 0 20 20"
+              >
                 <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
               </svg>
-              <p className="font-medium text-sm" style={{ color: "var(--text-primary)" }} title={`Task due date: ${note.dueDateFormatted}`}>
+              <p 
+                className={`font-medium text-sm ${isOverdue ? 'text-red-600 font-semibold' : ''}`} 
+                style={{ color: isOverdue ? "#dc2626" : "var(--text-primary)" }} 
+                title={`Task due date: ${note.dueDateFormatted}${isOverdue ? ' (OVERDUE)' : ''}`}
+              >
                 Due: {note.dueDateFormatted}
               </p>
             </div>

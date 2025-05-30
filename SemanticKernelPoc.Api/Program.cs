@@ -10,11 +10,32 @@ using SemanticKernelPoc.Api.Plugins.SharePoint;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add Azure AD authentication with token acquisition support
-builder.Services.AddMicrosoftIdentityWebApiAuthentication(builder.Configuration, "AzureAd")
-    .EnableTokenAcquisitionToCallDownstreamApi()
-    .AddMicrosoftGraph(builder.Configuration.GetSection("AzureAd"))
-    .AddInMemoryTokenCaches();
+// Add Azure AD authentication (without token acquisition - we'll handle OBO manually)
+builder.Services.AddMicrosoftIdentityWebApiAuthentication(builder.Configuration, "AzureAd");
+
+// Explicitly configure JwtBearerOptions for audience validation
+builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
+{
+    var audienceConfig = builder.Configuration.GetSection("AzureAd:Audience");
+    if (audienceConfig.Exists())
+    {
+        var audiences = audienceConfig.Get<string[]>();
+        if (audiences != null && audiences.Length > 0)
+        {
+            options.TokenValidationParameters.ValidAudiences = audiences;
+            options.TokenValidationParameters.ValidateAudience = true; // Ensure audience validation is active
+        }
+        else
+        {
+            var singleAudience = audienceConfig.Get<string>();
+            if (!string.IsNullOrEmpty(singleAudience))
+            {
+                options.TokenValidationParameters.ValidAudience = singleAudience;
+                options.TokenValidationParameters.ValidateAudience = true; // Ensure audience validation is active
+            }
+        }
+    }
+});
 
 // Configure CORS
 builder.Services.AddCors(options =>
@@ -28,11 +49,14 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Add Conversation Memory Service
+// Add conversation memory service
 builder.Services.AddSingleton<IConversationMemoryService, InMemoryConversationService>();
 
-// Add Graph Service for plugins
-builder.Services.AddSingleton<IGraphService, GraphService>();
+// Add response processing service for structured responses
+builder.Services.AddScoped<IResponseProcessingService, ResponseProcessingService>();
+
+// Add Graph Service for plugins (now using manual OBO approach)
+builder.Services.AddScoped<IGraphService, GraphService>();
 
 // Add MCP Client Service for SharePoint search
 builder.Services.AddSingleton<IMcpClientService, McpClientService>();
@@ -73,6 +97,17 @@ builder.Services.AddSingleton(sp =>
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
+
+// Configure JSON serialization to use camelCase
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+});
+
+builder.Services.Configure<Microsoft.AspNetCore.Mvc.JsonOptions>(options =>
+{
+    options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+});
 
 // Configure Swagger with Azure AD authentication
 builder.Services.AddSwaggerGen(c =>

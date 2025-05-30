@@ -1,62 +1,116 @@
 import React from "react";
 import CalendarCard from "./CalendarCard";
 import NoteCard from "./NoteCard";
+import EmailCard from "./EmailCard";
 import CapabilitiesCard from "./CapabilitiesCard";
+import type { ChatMessage, TaskCardData, EmailCardData } from "../types/chat";
 
 interface MessageRendererProps {
-  content: string;
-  isAiResponse?: boolean;
+  message: ChatMessage;
 }
 
-const MessageRenderer: React.FC<MessageRendererProps> = ({ content, isAiResponse = false }) => {
-  // Check if content contains capabilities information and it's an AI response
-  if (isAiResponse && (content.includes("I can assist you with a variety of tasks") || content.includes("Calendar Management") || content.includes("Note-Taking") || content.includes("Email Management") || content.includes("SharePoint and OneDrive"))) {
+const MessageRenderer: React.FC<MessageRendererProps> = ({ message }) => {
+  const { content, isAiResponse, cards } = message;
+
+  // If this is an AI response with structured card data, render cards
+  if (isAiResponse && cards) {
     return (
       <div className="space-y-4">
-        <CapabilitiesCard data={{ capabilities: content }} />
+        {/* Render the text content if it exists and is meaningful */}
+        {content && content.trim() && content !== "Here are your results:" && (
+          <div className="whitespace-pre-line text-sm mb-3" style={{ color: "var(--text-secondary)" }}>
+            {content}
+          </div>
+        )}
+        
+        {/* Render the appropriate card based on type */}
+        {cards.type === "tasks" && (
+          <NoteCard notes={cards.data as TaskCardData[]} />
+        )}
+        
+        {cards.type === "emails" && (
+          <EmailCard emails={cards.data as EmailCardData[]} />
+        )}
+        
+        {cards.type === "calendar" && (
+          <CalendarCard data={{
+            Type: "calendar_events",
+            Count: cards.count || 0,
+            UserName: cards.userName || "User",
+            TimeRange: cards.timeRange || "recent",
+            Events: cards.data as any[]
+          }} />
+        )}
+        
+        {cards.type === "capabilities" && (
+          <CapabilitiesCard data={cards.data} />
+        )}
       </div>
     );
   }
 
-  // Check if content contains calendar card data and it's an AI response
-  if (content.startsWith("CALENDAR_CARDS:") && isAiResponse) {
-    try {
-      const jsonData = content.replace("CALENDAR_CARDS:", "");
-      const calendarData = JSON.parse(jsonData);
-
-      // Validate that it's calendar data
-      if (calendarData.Type === "calendar_events" && calendarData.Events) {
-        return (
-          <div className="space-y-4">
-            <CalendarCard data={calendarData} />
-          </div>
-        );
-      }
-    } catch (error) {
-      console.error("Failed to parse calendar data:", error);
-      // Fall back to regular text rendering
+  // Legacy fallback: Check if content contains card data (for backward compatibility)
+  if (isAiResponse) {
+    // Check for capabilities
+    if (content.includes("I can assist you with a variety of tasks") || 
+        content.includes("Calendar Management") || 
+        content.includes("Note-Taking") || 
+        content.includes("Email Management") || 
+        content.includes("SharePoint and OneDrive")) {
+      return (
+        <div className="space-y-4">
+          <CapabilitiesCard data={{ capabilities: content }} />
+        </div>
+      );
     }
-  }
 
-  // Check if content contains task card data and it's an AI response
-  if (content.startsWith("TASK_CARDS:") && isAiResponse) {
-    try {
-      const jsonData = content.replace("TASK_CARDS:", "");
-      const taskData = JSON.parse(jsonData);
-
-      // Validate that it's an array of tasks
-      if (Array.isArray(taskData)) {
-        return (
-          <div className="space-y-4">
-            <NoteCard notes={taskData} />
-          </div>
-        );
-      } else {
-        console.warn("Task data is not an array:", taskData);
+    // Check for legacy card formats (for backward compatibility during transition)
+    if (content.startsWith("CALENDAR_CARDS:")) {
+      try {
+        const jsonData = content.replace("CALENDAR_CARDS:", "");
+        const calendarData = JSON.parse(jsonData);
+        if (calendarData.Type === "calendar_events" && calendarData.Events) {
+          return (
+            <div className="space-y-4">
+              <CalendarCard data={calendarData} />
+            </div>
+          );
+        }
+      } catch (error) {
+        console.error("Failed to parse legacy calendar data:", error);
       }
-    } catch (error) {
-      console.error("Failed to parse task data:", error);
-      // Fall back to regular text rendering
+    }
+
+    if (content.startsWith("TASK_CARDS:")) {
+      try {
+        const jsonData = content.replace("TASK_CARDS:", "").trim();
+        const taskData = JSON.parse(jsonData);
+        if (Array.isArray(taskData)) {
+          return (
+            <div className="space-y-4">
+              <NoteCard notes={taskData} />
+            </div>
+          );
+        }
+      } catch (error) {
+        console.error("Failed to parse legacy task data:", error);
+      }
+    }
+
+    if (content.startsWith("EMAIL_CARDS:")) {
+      try {
+        const jsonData = content.replace("EMAIL_CARDS:", "");
+        const emailData = JSON.parse(jsonData);
+        if (Array.isArray(emailData)) {
+          return (
+            <div className="space-y-4">
+              <EmailCard emails={emailData} />
+            </div>
+          );
+        }
+      } catch (error) {
+        console.error("Failed to parse legacy email data:", error);
+      }
     }
   }
 

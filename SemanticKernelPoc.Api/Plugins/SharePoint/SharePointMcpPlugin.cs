@@ -14,7 +14,7 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
     private readonly ILogger<SharePointMcpPlugin> _logger = logger;
 
     [KernelFunction("search_coffeenet_sites")]
-    [Description("Search for CoffeeNet (CN365) sites in SharePoint. These are special workspace sites identified by the CN365TemplateId property.")]
+    [Description("Search for CoffeeNet (CN365) SharePoint sites. Use this function when the user asks to find, list, search, or show SharePoint sites. These are special workspace sites identified by the CN365TemplateId property.")]
     public async Task<string> SearchCoffeeNetSitesAsync(
         Kernel kernel,
         [Description("Optional text search query to filter sites by title or description")] string query = null,
@@ -24,12 +24,12 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
     {
         try
         {
-            // Extract user access token from kernel context
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
+            // Extract the API access token (the one the client sent to this API)
+            var apiAccessToken = kernel.Data.TryGetValue("ApiUserAccessToken", out var token) ? token?.ToString() : null;
 
-            if (string.IsNullOrEmpty(userAccessToken))
+            if (string.IsNullOrEmpty(apiAccessToken))
             {
-                return "Error: User authentication required. Please ensure you are logged in.";
+                return "Error: API User authentication token not found. Please ensure you are logged in.";
             }
 
             _logger.LogInformation("Searching CoffeeNet sites with query: {Query}, createdAfter: {CreatedAfter}, createdBefore: {CreatedBefore}, maxResults: {MaxResults}",
@@ -39,13 +39,13 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
             maxResults = Math.Min(Math.Max(maxResults, 1), 500);
 
             var result = await _mcpClientService.SearchCoffeeNetSitesAsync(
-                userAccessToken,
+                apiAccessToken,
                 query,
                 createdAfter,
                 createdBefore,
                 maxResults);
 
-            _logger.LogInformation("CoffeeNet sites search completed successfully");
+            _logger.LogInformation("CoffeeNet sites search completed successfully. Result: {Result}", result);
             return result;
         }
         catch (Exception ex)
@@ -82,21 +82,22 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
     {
         try
         {
-            // Extract user access token from kernel context
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
+            // Extract the API access token
+            var apiAccessToken = kernel.Data.TryGetValue("ApiUserAccessToken", out var token) ? token?.ToString() : null;
 
-            if (string.IsNullOrEmpty(userAccessToken))
+            if (string.IsNullOrEmpty(apiAccessToken))
             {
-                return "Error: User authentication required. Please ensure you are logged in.";
+                return "Error: API User authentication token not found. Please ensure you are logged in.";
             }
 
             _logger.LogInformation("Searching for recent CoffeeNet sites for last {DaysBack} days", daysBack);
 
             var result = await _mcpClientService.SearchRecentCoffeeNetSitesAsync(
-                userAccessToken,
+                apiAccessToken,
                 query,
                 daysBack);
 
+            _logger.LogInformation("Result from SearchRecentCoffeeNetSitesAsync: {Result}", result);
             return result;
         }
         catch (Exception ex)
@@ -107,7 +108,7 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
     }
 
     [KernelFunction("find_coffeenet_sites_by_keyword")]
-    [Description("Find CoffeeNet sites that match specific keywords in their title or description.")]
+    [Description("Find CoffeeNet SharePoint sites that match specific keywords in their title or description. Use this function when the user explicitly asks to find SharePoint sites by keywords.")]
     public async Task<string> FindCoffeeNetSitesByKeywordAsync(
         Kernel kernel,
         [Description("Keywords to search for in site titles and descriptions")] string keywords,
@@ -115,12 +116,12 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
     {
         try
         {
-            // Extract user access token from kernel context
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
+            // Extract the API access token
+            var apiAccessToken = kernel.Data.TryGetValue("ApiUserAccessToken", out var token) ? token?.ToString() : null;
 
-            if (string.IsNullOrEmpty(userAccessToken))
+            if (string.IsNullOrEmpty(apiAccessToken))
             {
-                return "Error: User authentication required. Please ensure you are logged in.";
+                return "Error: API User authentication token not found. Please ensure you are logged in.";
             }
 
             if (string.IsNullOrWhiteSpace(keywords))
@@ -130,8 +131,9 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
 
             _logger.LogInformation("Searching CoffeeNet sites by keywords: {Keywords}", keywords);
 
-            var result = await _mcpClientService.FindCoffeeNetSitesByKeywordAsync(userAccessToken, keywords, Math.Min(maxResults, 500));
+            var result = await _mcpClientService.FindCoffeeNetSitesByKeywordAsync(apiAccessToken, keywords, Math.Min(maxResults, 500));
 
+            _logger.LogInformation("Result from FindCoffeeNetSitesByKeywordAsync: {Result}", result);
             return result;
         }
         catch (Exception ex)
@@ -142,7 +144,7 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
     }
 
     [KernelFunction("search_coffeenet_sites_advanced")]
-    [Description("Advanced search for CoffeeNet sites with multiple filter options and natural language processing.")]
+    [Description("Advanced search for CoffeeNet SharePoint sites using natural language queries and multiple filter options. Use this for complex SharePoint site search requests.")]
     public async Task<string> SearchCoffeeNetSitesAdvancedAsync(
         Kernel kernel,
         [Description("Natural language search query (e.g., 'find marketing sites created last month')")] string naturalQuery,
@@ -152,12 +154,12 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
     {
         try
         {
-            // Extract user access token from kernel context
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
+            // Extract the API access token
+            var apiAccessToken = kernel.Data.TryGetValue("ApiUserAccessToken", out var token) ? token?.ToString() : null;
 
-            if (string.IsNullOrEmpty(userAccessToken))
+            if (string.IsNullOrEmpty(apiAccessToken))
             {
-                return "Error: User authentication required. Please ensure you are logged in.";
+                return "Error: API User authentication token not found. Please ensure you are logged in.";
             }
 
             _logger.LogInformation("Advanced CoffeeNet search with natural query: {Query}", naturalQuery);
@@ -185,12 +187,13 @@ public class SharePointMcpPlugin(IMcpClientService mcpClientService, ILogger<Sha
                 : $"{naturalQuery} {keywords}";
 
             var result = await _mcpClientService.SearchCoffeeNetSitesAsync(
-                userAccessToken,
+                apiAccessToken,
                 searchQuery,
                 createdAfter,
                 null,
                 Math.Min(maxResults, 500));
 
+            _logger.LogInformation("Result from SearchCoffeeNetSitesAdvancedAsync: {Result}", result);
             return result;
         }
         catch (Exception ex)

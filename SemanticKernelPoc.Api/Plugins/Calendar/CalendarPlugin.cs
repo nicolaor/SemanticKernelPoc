@@ -1,4 +1,3 @@
-using Microsoft.Graph;
 using Microsoft.Graph.Models;
 using Microsoft.SemanticKernel;
 using System.ComponentModel;
@@ -11,10 +10,44 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
 {
     private static CalendarEventResponse CreateCalendarEventResponse(Event evt)
     {
+        // Parse and format the dates to ensure they're in a format JavaScript can understand
+        string? startDateTime = null;
+        string? endDateTime = null;
+        
+        if (evt.Start?.DateTime != null)
+        {
+            try
+            {
+                var startDate = DateTime.Parse(evt.Start.DateTime);
+                // Format as ISO 8601 with Z timezone indicator for JavaScript compatibility
+                startDateTime = startDate.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+            }
+            catch
+            {
+                // If parsing fails, use a fallback format
+                startDateTime = null;
+            }
+        }
+        
+        if (evt.End?.DateTime != null)
+        {
+            try
+            {
+                var endDate = DateTime.Parse(evt.End.DateTime);
+                // Format as ISO 8601 with Z timezone indicator for JavaScript compatibility
+                endDateTime = endDate.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+            }
+            catch
+            {
+                // If parsing fails, use a fallback format
+                endDateTime = null;
+            }
+        }
+
         return new CalendarEventResponse(
             evt.Subject ?? "No Subject",
-            evt.Start?.DateTime,
-            evt.End?.DateTime,
+            startDateTime,
+            endDateTime,
             evt.Location?.DisplayName ?? "No location",
             evt.Organizer?.EmailAddress?.Name ?? "Unknown",
             evt.IsAllDay ?? false,
@@ -32,7 +65,8 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
     [KernelFunction, Description("Get the user's upcoming calendar events")]
     public async Task<string> GetUpcomingEvents(Kernel kernel,
         [Description("Number of days to look ahead (default 7)")] int days = 7,
-        [Description("Maximum number of events to return (default 20)")] int maxEvents = 20)
+        [Description("Maximum number of events to return (default 20)")] int maxEvents = 20,
+        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
     {
         return await ExecuteGraphOperationAsync(
             kernel,
@@ -51,17 +85,40 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
 
                 if (events?.Value?.Any() == true)
                 {
-                    var eventList = events.Value.Select(CreateCalendarEventResponse);
+                    if (analysisMode)
+                    {
+                        // For analysis mode, return clean text without technical IDs
+                        var analysisData = events.Value.Select(evt => new
+                        {
+                            subject = evt.Subject ?? "No Subject",
+                            startDate = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd") : "Unknown",
+                            startTime = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("HH:mm") : "Unknown",
+                            endDate = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd") : "Unknown", 
+                            endTime = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("HH:mm") : "Unknown",
+                            location = evt.Location?.DisplayName ?? "No location",
+                            organizer = evt.Organizer?.EmailAddress?.Name ?? "Unknown",
+                            isAllDay = evt.IsAllDay ?? false,
+                            attendeeCount = evt.Attendees?.Count() ?? 0,
+                            body = evt.Body?.Content ?? ""
+                        });
 
-                    var calendarData = new CalendarCardsData(
-                        "calendar_events",
-                        events.Value.Count,
-                        userName,
-                        $"next {days} days",
-                        eventList
-                    );
+                        return $"CALENDAR_ANALYSIS:{System.Text.Json.JsonSerializer.Serialize(analysisData, new System.Text.Json.JsonSerializerOptions { WriteIndented = false })}";
+                    }
+                    else
+                    {
+                        // For card display mode, use the existing format
+                        var eventList = events.Value.Select(CreateCalendarEventResponse);
 
-                    return CalendarResponseFormats.FormatCalendarCards(calendarData);
+                        var calendarData = new CalendarCardsData(
+                            "calendar_events",
+                            events.Value.Count,
+                            userName,
+                            $"next {days} days",
+                            eventList
+                        );
+
+                        return CalendarResponseFormats.FormatCalendarCards(calendarData);
+                    }
                 }
 
                 return $"No upcoming events found for {userName} in the next {days} days.";
@@ -265,7 +322,8 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
     }
 
     [KernelFunction, Description("Get today's calendar events")]
-    public async Task<string> GetTodaysEvents(Kernel kernel)
+    public async Task<string> GetTodaysEvents(Kernel kernel,
+        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
     {
         return await ExecuteGraphOperationAsync(
             kernel,
@@ -283,17 +341,40 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
 
                 if (events?.Value?.Any() == true)
                 {
-                    var eventList = events.Value.Select(CreateCalendarEventResponse);
+                    if (analysisMode)
+                    {
+                        // For analysis mode, return clean text without technical IDs
+                        var analysisData = events.Value.Select(evt => new
+                        {
+                            subject = evt.Subject ?? "No Subject",
+                            startDate = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd") : "Unknown",
+                            startTime = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("HH:mm") : "Unknown",
+                            endDate = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd") : "Unknown", 
+                            endTime = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("HH:mm") : "Unknown",
+                            location = evt.Location?.DisplayName ?? "No location",
+                            organizer = evt.Organizer?.EmailAddress?.Name ?? "Unknown",
+                            isAllDay = evt.IsAllDay ?? false,
+                            attendeeCount = evt.Attendees?.Count() ?? 0,
+                            body = evt.Body?.Content ?? ""
+                        });
 
-                    var calendarData = new CalendarCardsData(
-                        "calendar_events",
-                        events.Value.Count,
-                        userName,
-                        $"today ({today:yyyy-MM-dd})",
-                        eventList
-                    );
+                        return $"CALENDAR_ANALYSIS:{System.Text.Json.JsonSerializer.Serialize(analysisData, new System.Text.Json.JsonSerializerOptions { WriteIndented = false })}";
+                    }
+                    else
+                    {
+                        // For card display mode, use the existing format
+                        var eventList = events.Value.Select(CreateCalendarEventResponse);
 
-                    return CalendarResponseFormats.FormatCalendarCards(calendarData);
+                        var calendarData = new CalendarCardsData(
+                            "calendar_events",
+                            events.Value.Count,
+                            userName,
+                            $"today ({today:yyyy-MM-dd})",
+                            eventList
+                        );
+
+                        return CalendarResponseFormats.FormatCalendarCards(calendarData);
+                    }
                 }
 
                 // No events today, check for upcoming events in the next 7 days
@@ -308,17 +389,40 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
 
                 if (upcomingEvents?.Value?.Any() == true)
                 {
-                    var upcomingEventList = upcomingEvents.Value.Select(CreateCalendarEventResponse);
+                    if (analysisMode)
+                    {
+                        // For analysis mode, return clean text without technical IDs
+                        var upcomingAnalysisData = upcomingEvents.Value.Select(evt => new
+                        {
+                            subject = evt.Subject ?? "No Subject",
+                            startDate = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd") : "Unknown",
+                            startTime = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("HH:mm") : "Unknown",
+                            endDate = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd") : "Unknown", 
+                            endTime = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("HH:mm") : "Unknown",
+                            location = evt.Location?.DisplayName ?? "No location",
+                            organizer = evt.Organizer?.EmailAddress?.Name ?? "Unknown",
+                            isAllDay = evt.IsAllDay ?? false,
+                            attendeeCount = evt.Attendees?.Count() ?? 0,
+                            body = evt.Body?.Content ?? ""
+                        });
 
-                    var upcomingResponse = new CalendarCardsData(
-                        "calendar_events",
-                        upcomingEvents.Value.Count,
-                        userName,
-                        $"No events today ({today:yyyy-MM-dd}), showing next {upcomingEvents.Value.Count} upcoming event{(upcomingEvents.Value.Count != 1 ? "s" : "")}",
-                        upcomingEventList
-                    );
+                        return $"CALENDAR_ANALYSIS:{System.Text.Json.JsonSerializer.Serialize(upcomingAnalysisData, new System.Text.Json.JsonSerializerOptions { WriteIndented = false })}";
+                    }
+                    else
+                    {
+                        // For card display mode, use the existing format
+                        var upcomingEventList = upcomingEvents.Value.Select(CreateCalendarEventResponse);
 
-                    return CalendarResponseFormats.FormatCalendarCards(upcomingResponse);
+                        var upcomingResponse = new CalendarCardsData(
+                            "calendar_events",
+                            upcomingEvents.Value.Count,
+                            userName,
+                            $"No events today ({today:yyyy-MM-dd}), showing next {upcomingEvents.Value.Count} upcoming event{(upcomingEvents.Value.Count != 1 ? "s" : "")}",
+                            upcomingEventList
+                        );
+
+                        return CalendarResponseFormats.FormatCalendarCards(upcomingResponse);
+                    }
                 }
 
                 return $"No events scheduled for today ({today:yyyy-MM-dd}) and no upcoming events found for {userName} in the next week.";

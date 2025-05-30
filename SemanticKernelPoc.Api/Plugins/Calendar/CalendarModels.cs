@@ -31,7 +31,13 @@ public static class CalendarResponseFormats
 {
     public static string FormatCalendarCards(CalendarCardsData data)
     {
-        return $"CALENDAR_CARDS:{System.Text.Json.JsonSerializer.Serialize(data, new System.Text.Json.JsonSerializerOptions { WriteIndented = false })}";
+        var result = $"CALENDAR_CARDS:{System.Text.Json.JsonSerializer.Serialize(data, new System.Text.Json.JsonSerializerOptions { WriteIndented = false })}";
+        
+        // Debug logging to track what we're actually returning
+        System.Diagnostics.Debug.WriteLine($"[CalendarResponseFormats] Returning: {result[..Math.Min(200, result.Length)]}...");
+        Console.WriteLine($"[CalendarResponseFormats] Returning: {result[..Math.Min(200, result.Length)]}...");
+        
+        return result;
     }
 
     public static string GenerateOutlookWebLink(string eventId)

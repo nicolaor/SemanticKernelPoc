@@ -9,9 +9,13 @@ namespace SemanticKernelPoc.Api.Plugins.Mail;
 
 public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) : BaseGraphPlugin(graphService, logger)
 {
-    [KernelFunction, Description("Get recent emails (simplified)")]
+    [KernelFunction, Description("Get recent emails from the user's inbox. Use this when user asks for 'emails', 'mail', 'inbox', 'messages', 'last N emails', 'recent emails', etc. Supports filtering by count, time period, and read status.")]
     public async Task<string> GetRecentEmails(Kernel kernel,
-        [Description("Number of recent emails to retrieve (default 10)")] int count = 10)
+        [Description("Number of recent emails to retrieve (default 5, max 10). Use this when user specifies 'last 2 emails', 'get 5 emails', etc.")] int count = 5,
+        [Description("Time period filter: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', or number of days like '7' for last 7 days")] string timePeriod = null,
+        [Description("Filter by read status: 'unread' for unread only, 'read' for read only, or null for all emails")] string readStatus = null,
+        [Description("Filter by importance: 'high', 'normal', 'low', or null for all importance levels")] string importance = null,
+        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
     {
         try
         {
@@ -25,31 +29,122 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
 
             var graphClient = await CreateClientAsync(userAccessToken);
 
-            // Use simplified Messages API
+            // Build filter conditions
+            var filters = new List<string>();
+            
+            // Time period filter
+            if (!string.IsNullOrWhiteSpace(timePeriod))
+            {
+                var (startDate, endDate) = ParseTimePeriod(timePeriod);
+                if (startDate.HasValue)
+                {
+                    filters.Add($"receivedDateTime ge {startDate.Value:yyyy-MM-ddTHH:mm:ssZ}");
+                }
+                if (endDate.HasValue)
+                {
+                    filters.Add($"receivedDateTime le {endDate.Value:yyyy-MM-ddTHH:mm:ssZ}");
+                }
+            }
+
+            // Read status filter
+            if (!string.IsNullOrWhiteSpace(readStatus))
+            {
+                if (readStatus.ToLower() == "unread")
+                {
+                    filters.Add("isRead eq false");
+                }
+                else if (readStatus.ToLower() == "read")
+                {
+                    filters.Add("isRead eq true");
+                }
+            }
+
+            // Importance filter
+            if (!string.IsNullOrWhiteSpace(importance))
+            {
+                var importanceValue = importance.ToLower() switch
+                {
+                    "high" => "high",
+                    "low" => "low",
+                    "normal" => "normal",
+                    _ => null
+                };
+                if (importanceValue != null)
+                {
+                    filters.Add($"importance eq '{importanceValue}'");
+                }
+            }
+
+            // Use simplified Messages API with filters
             var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
             {
                 requestConfig.QueryParameters.Top = Math.Min(count, 10);
                 requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
-                requestConfig.QueryParameters.Select = ["subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview"];
+                requestConfig.QueryParameters.Select = ["subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview", "id", "webLink"];
+                
+                if (filters.Any())
+                {
+                    requestConfig.QueryParameters.Filter = string.Join(" and ", filters);
+                }
             });
 
             if (messages?.Value?.Any() == true)
             {
-                var emailList = messages.Value.Select(msg => new
+                if (analysisMode)
                 {
-                    msg.Subject,
-                    From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
-                    ReceivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
-                    IsRead = msg.IsRead ?? false,
-                    Importance = msg.Importance?.ToString() ?? "Normal",
-                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview[..100] + "..." : msg.BodyPreview
-                });
+                    // For analysis mode, return full content without truncation and no technical IDs
+                    var analysisData = messages.Value.Select(msg => new
+                    {
+                        subject = msg.Subject ?? "No Subject",
+                        from = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
+                        fromEmail = msg.From?.EmailAddress?.Address ?? "",
+                        receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
+                        receivedDateTime = msg.ReceivedDateTime,
+                        isRead = msg.IsRead ?? false,
+                        importance = msg.Importance?.ToString() ?? "Normal",
+                        preview = msg.BodyPreview ?? "",
+                        fullContent = msg.Body?.Content ?? msg.BodyPreview ?? "",
+                        matchReason = !string.IsNullOrWhiteSpace(timePeriod) ? "TimePeriod" : 
+                                     !string.IsNullOrWhiteSpace(readStatus) ? "ReadStatus" : 
+                                     !string.IsNullOrWhiteSpace(importance) ? "Importance" : "Search"
+                    }).ToList();
 
-                return $"Recent emails for {userName}:\n" +
-                       JsonSerializer.Serialize(emailList, new JsonSerializerOptions { WriteIndented = true });
+                    var filterDescription = BuildFilterDescription(timePeriod, readStatus, importance);
+                    return $"EMAIL_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
+                }
+                else
+                {
+                    // Create email cards similar to task cards
+                    var emailCards = messages.Value.Select((msg, index) => new
+                    {
+                        id = $"email_{index}_{msg.Id?.GetHashCode().ToString("X")}",
+                        subject = msg.Subject?.Length > 80 ? msg.Subject[..80] + "..." : msg.Subject ?? "No Subject",
+                        from = msg.From?.EmailAddress?.Name?.Length > 50 ? 
+                            msg.From.EmailAddress.Name[..50] + "..." : 
+                            msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
+                        fromEmail = GetValidEmailAddress(msg.From?.EmailAddress?.Address),
+                        receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
+                        receivedDateTime = msg.ReceivedDateTime,
+                        isRead = msg.IsRead ?? false,
+                        importance = msg.Importance?.ToString() ?? "Normal",
+                        preview = msg.BodyPreview?.Length > 120 ? msg.BodyPreview[..120] + "..." : msg.BodyPreview ?? "",
+                        webLink = msg.WebLink ?? $"https://outlook.office.com/mail/id/{msg.Id}",
+                        importanceColor = msg.Importance?.ToString()?.ToLower() switch
+                        {
+                            "high" => "#ef4444",
+                            "low" => "#10b981",
+                            _ => "#6b7280"
+                        },
+                        readStatusColor = (msg.IsRead ?? false) ? "#10b981" : "#f59e0b"
+                    }).ToList();
+
+                    var filterDescription = BuildFilterDescription(timePeriod, readStatus, importance);
+                    return $"EMAIL_CARDS: {JsonSerializer.Serialize(emailCards, new JsonSerializerOptions { WriteIndented = false })}";
+                }
             }
 
-            return $"No recent emails found for {userName}.";
+            var filterDesc = BuildFilterDescription(timePeriod, readStatus, importance);
+            return $"No emails found for {userName}{(string.IsNullOrEmpty(filterDesc) ? "." : $" with filters: {filterDesc}.")}";
         }
         catch (Exception ex)
         {
@@ -279,10 +374,15 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
         }
     }
 
-    [KernelFunction, Description("Search emails (basic)")]
+    [KernelFunction, Description("Search emails by content, subject, sender, or keywords. Use this when user asks to 'search emails', 'find emails from [person]', 'emails about [topic]', 'emails containing [text]', etc.")]
     public async Task<string> SearchEmails(Kernel kernel,
-        [Description("Search query")] string searchQuery,
-        [Description("Maximum number of results (default 5)")] int maxResults = 5)
+        [Description("Search query to find in email content, subject, or sender. Can be keywords, phrases, or specific text")] string searchQuery = null,
+        [Description("Search specifically by sender name or email address. Use when user asks 'emails from John' or 'emails from john@company.com'")] string fromSender = null,
+        [Description("Search specifically in email subject line. Use when user asks 'emails with subject containing [text]'")] string subjectContains = null,
+        [Description("Time period to search within: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', or number of days")] string timePeriod = null,
+        [Description("Maximum number of results (default 5, max 10)")] int maxResults = 5,
+        [Description("Include only unread emails in search results")] bool unreadOnly = false,
+        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
     {
         try
         {
@@ -294,37 +394,120 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                 return "Unable to search emails - user authentication required.";
             }
 
-            if (string.IsNullOrWhiteSpace(searchQuery))
+            if (string.IsNullOrWhiteSpace(searchQuery) && string.IsNullOrWhiteSpace(fromSender) && string.IsNullOrWhiteSpace(subjectContains) && string.IsNullOrWhiteSpace(timePeriod))
             {
-                return "Please provide a search query to find emails.";
+                return "Please provide a search query, sender, subject, or time period to find emails.";
             }
 
             var graphClient = await CreateClientAsync(userAccessToken);
 
-            // Search using the search API
+            // Build filter conditions
+            var filters = new List<string>();
+            
+            // Time period filter
+            if (!string.IsNullOrWhiteSpace(timePeriod))
+            {
+                var (startDate, endDate) = ParseTimePeriod(timePeriod);
+                if (startDate.HasValue)
+                {
+                    filters.Add($"receivedDateTime ge {startDate.Value:yyyy-MM-ddTHH:mm:ssZ}");
+                }
+                if (endDate.HasValue)
+                {
+                    filters.Add($"receivedDateTime le {endDate.Value:yyyy-MM-ddTHH:mm:ssZ}");
+                }
+            }
+
+            // Read status filter
+            if (unreadOnly)
+            {
+                filters.Add("isRead eq false");
+            }
+
+            // Search query filter
+            if (!string.IsNullOrWhiteSpace(searchQuery))
+            {
+                filters.Add($"contains(subject, '{searchQuery.Replace("'", "''")}')");
+            }
+
+            // Sender filter
+            if (!string.IsNullOrWhiteSpace(fromSender))
+            {
+                filters.Add($"from/emailAddress/address eq '{fromSender}'");
+            }
+
+            // Subject contains filter
+            if (!string.IsNullOrWhiteSpace(subjectContains))
+            {
+                filters.Add($"contains(subject, '{subjectContains.Replace("'", "''")}')");
+            }
+
+            // Use simplified Messages API with filters
             var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
             {
-                requestConfig.QueryParameters.Search = $"\"{searchQuery}\"";
                 requestConfig.QueryParameters.Top = Math.Min(maxResults, 10);
                 requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
                 requestConfig.QueryParameters.Select = ["subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview"];
+                
+                if (filters.Any())
+                {
+                    requestConfig.QueryParameters.Filter = string.Join(" and ", filters);
+                }
             });
 
             if (messages?.Value?.Any() == true)
             {
-                var emailList = messages.Value.Select(msg => new
+                if (analysisMode)
                 {
-                    msg.Subject,
-                    From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
-                    ReceivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
-                    IsRead = msg.IsRead ?? false,
-                    Importance = msg.Importance?.ToString() ?? "Normal",
-                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview[..100] + "..." : msg.BodyPreview,
-                    MatchReason = "Content or Subject"
-                });
+                    // For analysis mode, return full content without truncation and no technical IDs
+                    var analysisData = messages.Value.Select(msg => new
+                    {
+                        subject = msg.Subject ?? "No Subject",
+                        from = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
+                        fromEmail = msg.From?.EmailAddress?.Address ?? "",
+                        receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
+                        receivedDateTime = msg.ReceivedDateTime,
+                        isRead = msg.IsRead ?? false,
+                        importance = msg.Importance?.ToString() ?? "Normal",
+                        preview = msg.BodyPreview ?? "",
+                        fullContent = msg.Body?.Content ?? msg.BodyPreview ?? "",
+                        matchReason = !string.IsNullOrWhiteSpace(searchQuery) ? "Content/Subject" : 
+                                     !string.IsNullOrWhiteSpace(fromSender) ? "Sender" : 
+                                     !string.IsNullOrWhiteSpace(subjectContains) ? "Subject" : "Search"
+                    }).ToList();
 
-                return $"Email search results for '{searchQuery}' (found {emailList.Count()} matches for {userName}):\n" +
-                       JsonSerializer.Serialize(emailList, new JsonSerializerOptions { WriteIndented = true });
+                    return $"EMAIL_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
+                }
+                else
+                {
+                    var emailCards = messages.Value.Select((msg, index) => new
+                    {
+                        id = $"search_{index}_{msg.Id?.GetHashCode().ToString("X")}",
+                        subject = msg.Subject?.Length > 80 ? msg.Subject[..80] + "..." : msg.Subject ?? "No Subject",
+                        from = msg.From?.EmailAddress?.Name?.Length > 50 ? 
+                            msg.From.EmailAddress.Name[..50] + "..." : 
+                            msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
+                        fromEmail = GetValidEmailAddress(msg.From?.EmailAddress?.Address),
+                        receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
+                        receivedDateTime = msg.ReceivedDateTime,
+                        isRead = msg.IsRead ?? false,
+                        importance = msg.Importance?.ToString() ?? "Normal",
+                        preview = msg.BodyPreview?.Length > 120 ? msg.BodyPreview[..120] + "..." : msg.BodyPreview ?? "",
+                        webLink = msg.WebLink ?? $"https://outlook.office.com/mail/id/{msg.Id}",
+                        matchReason = !string.IsNullOrWhiteSpace(searchQuery) ? "Content/Subject" : 
+                                     !string.IsNullOrWhiteSpace(fromSender) ? "Sender" : 
+                                     !string.IsNullOrWhiteSpace(subjectContains) ? "Subject" : "Search",
+                        importanceColor = msg.Importance?.ToString()?.ToLower() switch
+                        {
+                            "high" => "#ef4444",
+                            "low" => "#10b981",
+                            _ => "#6b7280"
+                        },
+                        readStatusColor = (msg.IsRead ?? false) ? "#10b981" : "#f59e0b"
+                    }).ToList();
+
+                    return $"EMAIL_CARDS: {JsonSerializer.Serialize(emailCards, new JsonSerializerOptions { WriteIndented = false })}";
+                }
             }
 
             return $"No emails found matching '{searchQuery}' for {userName}.";
@@ -519,9 +702,164 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
         }
     }
 
+    [KernelFunction, Description("Get emails from a specific sender or person. Use this when user asks 'emails from John', 'messages from my boss', 'emails from john@company.com', etc.")]
+    public async Task<string> GetEmailsFromSender(Kernel kernel,
+        [Description("Sender's email address or name to search for")] string senderEmailOrName,
+        [Description("Number of emails to retrieve from this sender (default 5, max 10)")] int count = 5,
+        [Description("Time period: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', or number of days")] string timePeriod = null,
+        [Description("Include only unread emails from this sender")] bool unreadOnly = false)
+    {
+        try
+        {
+            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
+            var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
+
+            if (string.IsNullOrEmpty(userAccessToken))
+            {
+                return "Unable to search emails - user authentication required.";
+            }
+
+            if (string.IsNullOrWhiteSpace(senderEmailOrName))
+            {
+                return "Please provide a sender email address or name to search for.";
+            }
+
+            var graphClient = await CreateClientAsync(userAccessToken);
+
+            // Build filter conditions
+            var filters = new List<string>();
+            
+            // Sender filter - try both email address and display name
+            if (senderEmailOrName.Contains("@"))
+            {
+                filters.Add($"from/emailAddress/address eq '{senderEmailOrName}'");
+            }
+            else
+            {
+                filters.Add($"contains(from/emailAddress/name, '{senderEmailOrName.Replace("'", "''")}')");
+            }
+
+            // Time period filter
+            if (!string.IsNullOrWhiteSpace(timePeriod))
+            {
+                var (startDate, endDate) = ParseTimePeriod(timePeriod);
+                if (startDate.HasValue)
+                {
+                    filters.Add($"receivedDateTime ge {startDate.Value:yyyy-MM-ddTHH:mm:ssZ}");
+                }
+                if (endDate.HasValue)
+                {
+                    filters.Add($"receivedDateTime le {endDate.Value:yyyy-MM-ddTHH:mm:ssZ}");
+                }
+            }
+
+            // Read status filter
+            if (unreadOnly)
+            {
+                filters.Add("isRead eq false");
+            }
+
+            var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
+            {
+                requestConfig.QueryParameters.Top = Math.Min(count, 10);
+                requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
+                requestConfig.QueryParameters.Select = ["subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview", "id", "webLink"];
+                requestConfig.QueryParameters.Filter = string.Join(" and ", filters);
+            });
+
+            if (messages?.Value?.Any() == true)
+            {
+                // Create email cards
+                var emailCards = messages.Value.Select((msg, index) => new
+                {
+                    id = $"sender_{index}_{msg.Id?.GetHashCode().ToString("X")}",
+                    subject = msg.Subject?.Length > 80 ? msg.Subject[..80] + "..." : msg.Subject ?? "No Subject",
+                    from = msg.From?.EmailAddress?.Name?.Length > 50 ? 
+                        msg.From.EmailAddress.Name[..50] + "..." : 
+                        msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
+                    fromEmail = GetValidEmailAddress(msg.From?.EmailAddress?.Address),
+                    receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
+                    receivedDateTime = msg.ReceivedDateTime,
+                    isRead = msg.IsRead ?? false,
+                    importance = msg.Importance?.ToString() ?? "Normal",
+                    preview = msg.BodyPreview?.Length > 120 ? msg.BodyPreview[..120] + "..." : msg.BodyPreview ?? "",
+                    webLink = msg.WebLink ?? $"https://outlook.office.com/mail/id/{msg.Id}",
+                    importanceColor = msg.Importance?.ToString()?.ToLower() switch
+                    {
+                        "high" => "#ef4444",
+                        "low" => "#10b981",
+                        _ => "#6b7280"
+                    },
+                    readStatusColor = (msg.IsRead ?? false) ? "#10b981" : "#f59e0b"
+                }).ToList();
+
+                return $"EMAIL_CARDS: {JsonSerializer.Serialize(emailCards, new JsonSerializerOptions { WriteIndented = false })}";
+            }
+
+            var filterDesc = BuildFilterDescription(timePeriod, unreadOnly ? "unread" : null, null);
+            return $"No emails found from '{senderEmailOrName}' for {userName}{(string.IsNullOrEmpty(filterDesc) ? "." : $" with filters: {filterDesc}.")}";
+        }
+        catch (Exception ex)
+        {
+            return $"Error searching emails from sender: {ex.Message}";
+        }
+    }
+
     private async Task<GraphServiceClient> CreateClientAsync(string userAccessToken)
     {
-        // Use the injected GraphService to create client with On-Behalf-Of flow
         return await _graphService.CreateClientAsync(userAccessToken);
+    }
+
+    private static (DateTime? startDate, DateTime? endDate) ParseTimePeriod(string timePeriod)
+    {
+        if (string.IsNullOrWhiteSpace(timePeriod))
+            return (null, null);
+
+        var now = DateTime.UtcNow;
+        var today = now.Date;
+
+        return timePeriod.ToLower().Trim() switch
+        {
+            "today" => (today, today.AddDays(1)),
+            "yesterday" => (today.AddDays(-1), today),
+            "this_week" => (today.AddDays(-(int)today.DayOfWeek), today.AddDays(7 - (int)today.DayOfWeek)),
+            "last_week" => (today.AddDays(-7 - (int)today.DayOfWeek), today.AddDays(-(int)today.DayOfWeek)),
+            "this_month" => (new DateTime(today.Year, today.Month, 1), new DateTime(today.Year, today.Month, 1).AddMonths(1)),
+            "last_month" => (new DateTime(today.Year, today.Month, 1).AddMonths(-1), new DateTime(today.Year, today.Month, 1)),
+            _ when int.TryParse(timePeriod, out var days) && days > 0 => (today.AddDays(-days), null),
+            _ => (null, null)
+        };
+    }
+
+    private static string BuildFilterDescription(string timePeriod, string readStatus, string importance)
+    {
+        var filters = new List<string>();
+        
+        if (!string.IsNullOrWhiteSpace(timePeriod))
+            filters.Add($"time: {timePeriod}");
+        
+        if (!string.IsNullOrWhiteSpace(readStatus))
+            filters.Add($"status: {readStatus}");
+        
+        if (!string.IsNullOrWhiteSpace(importance))
+            filters.Add($"importance: {importance}");
+        
+        return string.Join(", ", filters);
+    }
+
+    private static string GetValidEmailAddress(string emailAddress)
+    {
+        if (string.IsNullOrWhiteSpace(emailAddress))
+            return null;
+
+        try
+        {
+            var addr = new System.Net.Mail.MailAddress(emailAddress);
+            return addr.Address == emailAddress ? emailAddress : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

@@ -111,11 +111,14 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
         }
     }
 
-    [KernelFunction, Description("Get recent tasks (To Do tasks). Use this when user asks for 'tasks', 'my tasks', 'recent tasks', 'show tasks', 'todos', etc.")]
+    [KernelFunction, Description("Get recent tasks and to-do items from Microsoft To Do. Use this for queries specifically about tasks, like 'my tasks', 'show my To Do list', 'recent to-dos', or 'what are my tasks for this week'. This function is ONLY for tasks and should NOT be used for SharePoint sites, OneDrive files, emails, or calendar events. Supports filtering by count, time period, completion status, and task list.")]
     public async Task<string> GetRecentNotes(Kernel kernel,
-        [Description("Number of recent tasks to retrieve (default 10)")] int count = 10,
-        [Description("Include completed tasks (default false)")] bool includeCompleted = false,
-        [Description("Task list name (optional, searches all lists if not specified)")] string listName = null)
+        [Description("Number of recent tasks to retrieve (default 5, max 10). Use this when user specifies 'last 3 tasks', 'get 5 todos', etc.")] int count = 5,
+        [Description("Include completed tasks (default false). Set to true when user asks for 'all tasks' or 'completed tasks'")] bool includeCompleted = false,
+        [Description("Task list name (optional, searches all lists if not specified). Use when user asks for tasks from specific list")] string listName = null,
+        [Description("Time period filter: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', or number of days like '7' for last 7 days")] string timePeriod = null,
+        [Description("Filter by completion status: 'completed', 'incomplete', or null for all tasks based on includeCompleted parameter")] string completionStatus = null,
+        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
@@ -123,8 +126,8 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
             var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
             var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
 
-            _logger.LogInformation("⏱️ GetRecentNotes started for user {UserName} with count={Count}, includeCompleted={IncludeCompleted}, listName={ListName}",
-                userName, count, includeCompleted, listName);
+            _logger.LogInformation("⏱️ GetRecentNotes started for user {UserName} with count={Count}, includeCompleted={IncludeCompleted}, listName={ListName}, timePeriod={TimePeriod}, completionStatus={CompletionStatus}",
+                userName, count, includeCompleted, listName, timePeriod, completionStatus);
 
             if (string.IsNullOrEmpty(userAccessToken))
             {
@@ -200,61 +203,131 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
                 .Take(Math.Min(count, 10))
                 .ToList();
 
-            _logger.LogInformation("⏱️ GetRecentNotes: Task sorting and filtering completed in {ElapsedMs}ms - returning {ReturnCount} tasks (total: {TotalMs}ms)",
+            // Apply additional filters if specified
+            if (!string.IsNullOrWhiteSpace(timePeriod))
+            {
+                var (startDate, endDate) = ParseTimePeriod(timePeriod);
+                if (startDate.HasValue || endDate.HasValue)
+                {
+                    recentTasks = recentTasks.Where(t =>
+                    {
+                        var createdDate = t.Task.CreatedDateTime?.DateTime;
+                        if (!createdDate.HasValue) return false;
+                        
+                        if (startDate.HasValue && createdDate < startDate.Value) return false;
+                        if (endDate.HasValue && createdDate > endDate.Value) return false;
+                        
+                        return true;
+                    }).ToList();
+                }
+            }
+
+            // Apply completion status filter if specified
+            if (!string.IsNullOrWhiteSpace(completionStatus))
+            {
+                var isCompletedFilter = completionStatus.ToLower() == "completed";
+                recentTasks = recentTasks.Where(t =>
+                {
+                    var isCompleted = t.Task.Status == Microsoft.Graph.Models.TaskStatus.Completed;
+                    return isCompletedFilter ? isCompleted : !isCompleted;
+                }).ToList();
+            }
+
+            _logger.LogInformation("⏱️ GetRecentNotes: Task processing and filtering completed in {ElapsedMs}ms - {TaskCount} tasks after filtering (total: {TotalMs}ms)",
                 stopwatch.ElapsedMilliseconds - processingStartTime, recentTasks.Count, stopwatch.ElapsedMilliseconds);
 
             // Create task cards similar to calendar cards
             var cardCreationStartTime = stopwatch.ElapsedMilliseconds;
-            var taskCards = recentTasks.Select(t => new
+            
+            if (analysisMode)
             {
-                id = t.Task.Id,
-                title = t.Task.Title ?? "Untitled Task",
-                content = t.Task.Body?.Content?.Length > 150 ?
-                    t.Task.Body.Content[..150] + "..." :
-                    t.Task.Body?.Content ?? "",
-                status = t.Task.Status?.ToString() ?? "NotStarted",
-                priority = t.Task.Importance?.ToString() ?? "Normal",
-                dueDate = t.Task.DueDateTime?.DateTime,
-                dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
-                    DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
-                created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
-                createdDateTime = t.Task.CreatedDateTime,
-                isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
-                webLink = $"https://to-do.office.com/tasks/{t.Task.Id}/details",
-                priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
+                // For analysis mode, return full content without truncation and no technical IDs
+                var analysisData = recentTasks.Select(t => new
                 {
-                    "high" => "#ef4444",
-                    "low" => "#10b981",
-                    _ => "#6b7280"
-                },
-                statusColor = t.Task.Status?.ToString()?.ToLower() switch
-                {
-                    "completed" => "#10b981",
-                    "inprogress" => "#f59e0b",
-                    "waitingonothers" => "#8b5cf6",
-                    "deferred" => "#6b7280",
-                    _ => "#3b82f6"
-                }
-            }).ToList();
+                    title = t.Task.Title ?? "Untitled Task",
+                    content = t.Task.Body?.Content ?? "",
+                    status = t.Task.Status?.ToString() ?? "NotStarted",
+                    priority = t.Task.Importance?.ToString() ?? "Normal",
+                    dueDate = t.Task.DueDateTime?.DateTime,
+                    dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
+                        DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
+                    created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
+                    isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
+                    listName = t.ListName
+                }).ToList();
 
-            var result = $"TASK_CARDS: {JsonSerializer.Serialize(taskCards, new JsonSerializerOptions { WriteIndented = false })}";
-            _logger.LogInformation("⏱️ GetRecentNotes: Card creation completed in {ElapsedMs}ms (total: {TotalMs}ms)",
-                stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
-            _logger.LogInformation("⏱️ GetRecentNotes: TOTAL FUNCTION TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
-            _logger.LogInformation("GetRecentNotes: Returning result: {Result}", result);
-            return result;
+                if (!analysisData.Any())
+                {
+                    return $"No tasks match your criteria for {userName}.";
+                }
+
+                var result = $"TASK_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
+                _logger.LogInformation("⏱️ GetRecentNotes: Analysis data creation completed in {ElapsedMs}ms (total: {TotalMs}ms)",
+                    stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
+                return result;
+            }
+            else
+            {
+                // For card mode, return truncated content with UI-friendly data
+                var taskCards = recentTasks.Select((t, index) => new
+                {
+                    id = $"task_{index}_{t.Task.Id?.GetHashCode().ToString("X")}",
+                    title = t.Task.Title ?? "Untitled Task",
+                    content = t.Task.Body?.Content?.Length > 100 ?
+                        t.Task.Body.Content[..100] + "..." :
+                        t.Task.Body?.Content ?? "",
+                    status = t.Task.Status?.ToString() ?? "NotStarted",
+                    priority = t.Task.Importance?.ToString() ?? "Normal",
+                    dueDate = t.Task.DueDateTime?.DateTime,
+                    dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
+                        DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
+                    created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
+                    isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
+                    webLink = $"https://to-do.office.com/tasks/{t.Task.Id}/details",
+                    priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
+                    {
+                        "high" => "#ef4444",
+                        "low" => "#10b981",
+                        _ => "#6b7280"
+                    },
+                    statusColor = t.Task.Status?.ToString()?.ToLower() switch
+                    {
+                        "completed" => "#10b981",
+                        "inprogress" => "#f59e0b",
+                        "waitingonothers" => "#8b5cf6",
+                        "deferred" => "#6b7280",
+                        _ => "#3b82f6"
+                    }
+                }).ToList();
+
+                if (!taskCards.Any())
+                {
+                    return $"No tasks match your criteria for {userName}.";
+                }
+
+                var result = $"TASK_CARDS: {JsonSerializer.Serialize(taskCards, new JsonSerializerOptions { WriteIndented = false })}";
+                _logger.LogInformation("⏱️ GetRecentNotes: Card creation completed in {ElapsedMs}ms (total: {TotalMs}ms)",
+                    stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("⏱️ GetRecentNotes: TOTAL FUNCTION TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("GetRecentNotes: Returning result: {Result}", result);
+                return result;
+            }
         }
         catch (Exception ex)
         {
-            return $"❌ Error getting recent tasks: {ex.Message}";
+            _logger.LogError(ex, "Error in GetRecentNotes for user {UserName}", kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "Unknown");
+            return $"Error retrieving tasks: {ex.Message}";
         }
     }
 
-    [KernelFunction, Description("Search tasks (To Do tasks) by content")]
+    [KernelFunction, Description("Search tasks and to-do items in Microsoft To Do by content, keywords, or title. Use this for queries like 'search my tasks for [keyword]', 'find To Do items about [topic]'. This function is ONLY for tasks and should NOT be used for SharePoint sites, OneDrive files, emails, or calendar events. Supports filtering by max results, completion status, time period, and task list.")]
     public async Task<string> SearchNotes(Kernel kernel,
-        [Description("Search query to find in task titles and content")] string searchQuery,
-        [Description("Maximum number of results (default 10)")] int maxResults = 10,
-        [Description("Include completed tasks in search (default false)")] bool includeCompleted = false)
+        [Description("Search query to find in task titles and content. Can be keywords, phrases, or specific text")] string searchQuery,
+        [Description("Maximum number of results (default 5, max 10)")] int maxResults = 5,
+        [Description("Include completed tasks in search (default false). Set to true when user wants to search all tasks")] bool includeCompleted = false,
+        [Description("Time period to search within: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', or number of days")] string timePeriod = null,
+        [Description("Search in specific task list only (optional)")] string listName = null,
+        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
     {
         try
         {
@@ -275,11 +348,25 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
 
             var allTasks = new List<(TodoTask Task, string ListName)>();
 
-            // Search all lists
+            // Get all lists or specific list
             var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
             if (taskLists?.Value?.Any() == true)
             {
-                foreach (var list in taskLists.Value)
+                var listsToSearch = taskLists.Value;
+                
+                // Filter to specific list if requested
+                if (!string.IsNullOrWhiteSpace(listName))
+                {
+                    listsToSearch = taskLists.Value.Where(l => 
+                        l.DisplayName?.Contains(listName, StringComparison.OrdinalIgnoreCase) == true).ToList();
+                    
+                    if (!listsToSearch.Any())
+                    {
+                        return $"Task list '{listName}' not found for {userName}.";
+                    }
+                }
+
+                foreach (var list in listsToSearch)
                 {
                     if (list.Id != null)
                     {
@@ -289,59 +376,109 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
                 }
             }
 
-            // Filter tasks by search query (case-insensitive)
-            var searchLower = searchQuery.ToLower();
-            var matchingTasks = allTasks
-                .Where(t =>
-                    (t.Task.Title?.ToLower().Contains(searchLower, StringComparison.CurrentCultureIgnoreCase) == true) ||
-                    (t.Task.Body?.Content?.ToLower().Contains(searchLower, StringComparison.CurrentCultureIgnoreCase) == true))
-                .Take(Math.Min(maxResults, 20))
-                .ToList();
-
-            if (!matchingTasks.Any())
+            if (!allTasks.Any())
             {
-                return $"No tasks found matching '{searchQuery}' for {userName}.";
+                return $"No tasks found for {userName}.";
             }
 
-            // Create task cards for search results
-            var taskCards = matchingTasks.Select(t => new
-            {
-                id = t.Task.Id,
-                title = t.Task.Title ?? "Untitled Task",
-                content = t.Task.Body?.Content?.Length > 150 ?
-                    t.Task.Body.Content[..150] + "..." :
-                    t.Task.Body?.Content ?? "",
-                status = t.Task.Status?.ToString() ?? "NotStarted",
-                priority = t.Task.Importance?.ToString() ?? "Normal",
-                dueDate = t.Task.DueDateTime?.DateTime,
-                dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
-                    DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
-                created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
-                createdDateTime = t.Task.CreatedDateTime,
-                isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
-                matchReason = (t.Task.Title?.ToLower().Contains(searchLower, StringComparison.CurrentCultureIgnoreCase) == true) ? "Title" : "Content",
-                webLink = $"https://to-do.office.com/tasks/id/{t.Task.Id}/details",
-                priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
-                {
-                    "high" => "#ef4444",
-                    "low" => "#10b981",
-                    _ => "#6b7280"
-                },
-                statusColor = t.Task.Status?.ToString()?.ToLower() switch
-                {
-                    "completed" => "#10b981",
-                    "inprogress" => "#f59e0b",
-                    "waitingonothers" => "#8b5cf6",
-                    "deferred" => "#6b7280",
-                    _ => "#3b82f6"
-                }
-            }).ToList();
+            // Filter by search query
+            var matchingTasks = allTasks.Where(t =>
+                (t.Task.Title?.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) == true) ||
+                (t.Task.Body?.Content?.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) == true)
+            ).ToList();
 
-            return $"TASK_CARDS: {JsonSerializer.Serialize(taskCards, new JsonSerializerOptions { WriteIndented = false })}";
+            // Apply time period filter if specified
+            if (!string.IsNullOrWhiteSpace(timePeriod))
+            {
+                var (startDate, endDate) = ParseTimePeriod(timePeriod);
+                if (startDate.HasValue || endDate.HasValue)
+                {
+                    matchingTasks = matchingTasks.Where(t =>
+                    {
+                        var createdDate = t.Task.CreatedDateTime?.DateTime;
+                        if (!createdDate.HasValue) return false;
+                        
+                        if (startDate.HasValue && createdDate < startDate.Value) return false;
+                        if (endDate.HasValue && createdDate > endDate.Value) return false;
+                        
+                        return true;
+                    }).ToList();
+                }
+            }
+
+            // Sort by creation time and limit results
+            var searchResults = matchingTasks
+                .OrderByDescending(t => t.Task.CreatedDateTime ?? DateTimeOffset.MinValue)
+                .Take(Math.Min(maxResults, 10))
+                .ToList();
+
+            if (!searchResults.Any())
+            {
+                return $"No tasks were found matching your search query: '{searchQuery}'.";
+            }
+
+            if (analysisMode)
+            {
+                // For analysis mode, return full content without truncation and no technical IDs
+                var analysisData = searchResults.Select(t => new
+                {
+                    title = t.Task.Title ?? "Untitled Task",
+                    content = t.Task.Body?.Content ?? "",
+                    status = t.Task.Status?.ToString() ?? "NotStarted",
+                    priority = t.Task.Importance?.ToString() ?? "Normal",
+                    dueDate = t.Task.DueDateTime?.DateTime,
+                    dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
+                        DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
+                    created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
+                    isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
+                    matchReason = (t.Task.Title?.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) == true) ? "Title" : "Content",
+                    listName = t.ListName
+                }).ToList();
+
+                return $"TASK_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
+            }
+            else
+            {
+                // Create task cards for search results
+                var taskCards = searchResults.Select((t, index) => new
+                {
+                    id = $"search_{index}_{t.Task.Id?.GetHashCode().ToString("X")}",
+                    title = t.Task.Title ?? "Untitled Task",
+                    content = t.Task.Body?.Content?.Length > 100 ?
+                        t.Task.Body.Content[..100] + "..." :
+                        t.Task.Body?.Content ?? "",
+                    status = t.Task.Status?.ToString() ?? "NotStarted",
+                    priority = t.Task.Importance?.ToString() ?? "Normal",
+                    dueDate = t.Task.DueDateTime?.DateTime,
+                    dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
+                        DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
+                    created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
+                    isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
+                    matchReason = (t.Task.Title?.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) == true) ? "Title" : "Content",
+                    webLink = $"https://to-do.office.com/tasks/{t.Task.Id}/details",
+                    priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
+                    {
+                        "high" => "#ef4444",
+                        "low" => "#10b981",
+                        _ => "#6b7280"
+                    },
+                    statusColor = t.Task.Status?.ToString()?.ToLower() switch
+                    {
+                        "completed" => "#10b981",
+                        "inprogress" => "#f59e0b",
+                        "waitingonothers" => "#8b5cf6",
+                        "deferred" => "#6b7280",
+                        _ => "#3b82f6"
+                    }
+                }).ToList();
+
+                return $"TASK_CARDS: {JsonSerializer.Serialize(taskCards, new JsonSerializerOptions { WriteIndented = false })}";
+            }
         }
         catch (Exception ex)
         {
-            return $"❌ Error searching tasks: {ex.Message}";
+            _logger.LogError(ex, "Error in SearchNotes for user {UserName} with query '{SearchQuery}'", kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "Unknown", searchQuery);
+            return $"Error searching tasks: {ex.Message}";
         }
     }
 
@@ -542,7 +679,27 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
 
     private async Task<GraphServiceClient> CreateClientAsync(string userAccessToken)
     {
-        // Use the injected GraphService to create client with On-Behalf-Of flow
         return await _graphService.CreateClientAsync(userAccessToken);
+    }
+
+    private static (DateTime? startDate, DateTime? endDate) ParseTimePeriod(string timePeriod)
+    {
+        if (string.IsNullOrWhiteSpace(timePeriod))
+            return (null, null);
+
+        var now = DateTime.UtcNow;
+        var today = now.Date;
+
+        return timePeriod.ToLower().Trim() switch
+        {
+            "today" => (today, today.AddDays(1)),
+            "yesterday" => (today.AddDays(-1), today),
+            "this_week" => (today.AddDays(-(int)today.DayOfWeek), today.AddDays(7 - (int)today.DayOfWeek)),
+            "last_week" => (today.AddDays(-7 - (int)today.DayOfWeek), today.AddDays(-(int)today.DayOfWeek)),
+            "this_month" => (new DateTime(today.Year, today.Month, 1), new DateTime(today.Year, today.Month, 1).AddMonths(1)),
+            "last_month" => (new DateTime(today.Year, today.Month, 1).AddMonths(-1), new DateTime(today.Year, today.Month, 1)),
+            _ when int.TryParse(timePeriod, out var days) && days > 0 => (today.AddDays(-days), null),
+            _ => (null, null)
+        };
     }
 }

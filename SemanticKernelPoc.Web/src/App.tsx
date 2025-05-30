@@ -92,6 +92,7 @@ function App() {
 
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
+      sessionId: `session_${userProfile.userId}_${new Date().toISOString().split('T')[0]}`,
       content: newMessage,
       userId: userProfile.userId,
       userName: userProfile.displayName,
@@ -140,6 +141,7 @@ function App() {
       // Add error message
       const errorMessage: ChatMessage = {
         id: Date.now().toString() + "_error",
+        sessionId: `session_${userProfile.userId}_${new Date().toISOString().split('T')[0]}`,
         content: errorContent,
         userId: "ai-assistant",
         userName: "AI Assistant",
@@ -348,7 +350,7 @@ function App() {
                             border: message.isAiResponse ? "1px solid var(--border-primary)" : "none",
                           }}
                         >
-                          <MessageRenderer content={message.content} isAiResponse={message.isAiResponse} />
+                          <MessageRenderer message={message} />
                         </div>
                       </div>
                     </div>

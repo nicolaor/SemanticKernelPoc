@@ -1,9 +1,7 @@
 using Microsoft.Identity.Client;
 using System.Text.Json;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
-using System.Net;
 
 namespace SemanticKernelPoc.McpServer.Services;
 

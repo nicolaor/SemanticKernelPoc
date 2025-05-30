@@ -8,26 +8,18 @@ public class GraphService : IGraphService
 {
     private readonly ILogger<GraphService> _logger;
     private readonly IConfiguration _configuration;
-    private readonly IConfidentialClientApplication _clientApp;
 
     public GraphService(ILogger<GraphService> logger, IConfiguration configuration)
     {
         _logger = logger;
         _configuration = configuration;
-
-        // Initialize MSAL client app for On-Behalf-Of flow
-        _clientApp = ConfidentialClientApplicationBuilder
-            .Create(_configuration["AzureAd:ClientId"])
-            .WithClientSecret(_configuration["AzureAd:ClientSecret"])
-            .WithAuthority(new Uri($"https://login.microsoftonline.com/{_configuration["AzureAd:TenantId"]}"))
-            .Build();
     }
 
     public async Task<GraphServiceClient> CreateClientAsync(string userAccessToken)
     {
         try
         {
-            // Use On-Behalf-Of flow to get Microsoft Graph token
+            _logger.LogInformation("Creating Graph client using On-Behalf-Of flow");
             var graphToken = await GetGraphTokenAsync(userAccessToken);
 
             var httpClient = new HttpClient();
@@ -53,15 +45,20 @@ public class GraphService : IGraphService
     {
         try
         {
-            // Define the scopes we need for Graph API
-            var scopes = new[] { "https://graph.microsoft.com/.default" };
+            var clientId = _configuration["AzureAd:ClientId"];
+            var clientSecret = _configuration["AzureAd:ClientSecret"];
+            var tenantId = _configuration["AzureAd:TenantId"];
 
-            // Create UserAssertion from the incoming token
+            var app = ConfidentialClientApplicationBuilder
+                .Create(clientId)
+                .WithClientSecret(clientSecret)
+                .WithAuthority(new Uri($"https://login.microsoftonline.com/{tenantId}"))
+                .Build();
+
+            var scopes = new[] { "https://graph.microsoft.com/.default" };
             var userAssertion = new UserAssertion(userAccessToken);
 
-            // Use On-Behalf-Of flow to get Graph token
-            var result = await _clientApp
-                .AcquireTokenOnBehalfOf(scopes, userAssertion)
+            var result = await app.AcquireTokenOnBehalfOf(scopes, userAssertion)
                 .ExecuteAsync();
 
             _logger.LogInformation("Successfully acquired Graph API token using On-Behalf-Of flow");
