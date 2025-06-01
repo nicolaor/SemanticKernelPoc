@@ -243,24 +243,64 @@ public class SharePointSearchService : ISharePointSearchService
 
     private string BuildSearchQuery(SharePointSearchRequest request)
     {
-        // Start with a simple basic query - just search for sites
-        var query = "contentclass:STS_Site";
+        // Start with a basic query to find sites
+        var queryParts = new List<string> { "contentclass:STS_Site" };
 
-        // Add user query if provided - for now just simple text search
+        // Add user query if provided - use proper SharePoint query syntax
         if (!string.IsNullOrEmpty(request.Query))
         {
-            query = $"{request.Query} {query}";
+            // Escape special characters and add as a phrase search or individual terms
+            var userQuery = request.Query.Trim();
+            if (userQuery.Contains(' '))
+            {
+                // Multi-word query - use phrase search
+                queryParts.Add($"\"{userQuery}\"");
+            }
+            else
+            {
+                // Single word - add as-is
+                queryParts.Add(userQuery);
+            }
         }
 
-        _logger.LogInformation("Built search query: {Query}", query);
-        return query;
+        // Add date filtering if provided
+        if (!string.IsNullOrEmpty(request.CreatedAfter))
+        {
+            if (DateTime.TryParse(request.CreatedAfter, out var afterDate))
+            {
+                // SharePoint uses Write property for last modified date
+                var dateString = afterDate.ToString("yyyy-MM-ddTHH:mm:ssZ");
+                queryParts.Add($"Write>={dateString}");
+            }
+        }
+
+        if (!string.IsNullOrEmpty(request.CreatedBefore))
+        {
+            if (DateTime.TryParse(request.CreatedBefore, out var beforeDate))
+            {
+                var dateString = beforeDate.ToString("yyyy-MM-ddTHH:mm:ssZ");
+                queryParts.Add($"Write<={dateString}");
+            }
+        }
+
+        // Combine all query parts with AND
+        var finalQuery = string.Join(" AND ", queryParts);
+
+        _logger.LogInformation("Built search query: {Query}", finalQuery);
+        return finalQuery;
     }
 
     private async Task<dynamic> ExecuteSearchAsync(string accessToken, string query, TenantInfo tenantInfo)
     {
         // Build the search URL for GET request using the dynamically retrieved SharePoint URL
         var encodedQuery = Uri.EscapeDataString(query);
-        var searchUrl = $"{tenantInfo.SharePointRootUrl}/_api/search/query?querytext='{encodedQuery}'&rowlimit=50";
+        
+        // Use a more comprehensive search URL with proper parameters
+        var searchUrl = $"{tenantInfo.SharePointRootUrl}/_api/search/query?" +
+                       $"querytext='{encodedQuery}'" +
+                       $"&rowlimit=50" +
+                       $"&selectproperties='Title,Path,Description,Write,LastModifiedTime,WebTemplate,SiteDescription,CN365TemplateIdOWSText,CN365TemplateId'" +
+                       $"&trimduplicates=true";
 
         _logger.LogInformation("=== SHAREPOINT GET REQUEST ===");
         _logger.LogInformation("URL: {SearchUrl}", searchUrl);
@@ -271,6 +311,7 @@ public class SharePointSearchService : ISharePointSearchService
         _httpClient.DefaultRequestHeaders.Clear();
         _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {accessToken}");
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json;odata=verbose");
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "SemanticKernelPoc/1.0");
 
         _logger.LogInformation("Making HTTP GET request using injected HttpClient...");
 
@@ -285,6 +326,16 @@ public class SharePointSearchService : ISharePointSearchService
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("SharePoint API returned error. Status: {StatusCode}, Content: {Content}", response.StatusCode, content);
+                
+                // Check for specific authentication errors
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    throw new UnauthorizedAccessException("SharePoint API returned 401 Unauthorized. Please check your authentication token and permissions.");
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    throw new UnauthorizedAccessException("SharePoint API returned 403 Forbidden. You may not have permission to search SharePoint sites.");
+                }
             }
 
             response.EnsureSuccessStatusCode();
@@ -332,51 +383,87 @@ public class SharePointSearchService : ISharePointSearchService
 
             _logger.LogInformation("Parsing SharePoint search results from JsonElement");
 
-            // Try different possible response structures
-            JsonElement? resultsElement = null;
+            // Navigate through the SharePoint REST API response structure
+            JsonElement? rowsElement = null;
 
-            // Try modern SharePoint REST API format
-            if (jsonElement.TryGetProperty("PrimaryQueryResult", out var primaryResult) &&
+            // Try the expected SharePoint REST API format: d.query.PrimaryQueryResult.RelevantResults.Table.Rows
+            if (jsonElement.TryGetProperty("d", out var dWrapper) &&
+                dWrapper.TryGetProperty("query", out var queryWrapper) &&
+                queryWrapper.TryGetProperty("PrimaryQueryResult", out var primaryResult) &&
                 primaryResult.TryGetProperty("RelevantResults", out var relevantResults) &&
                 relevantResults.TryGetProperty("Table", out var table) &&
-                table.TryGetProperty("Rows", out var rows))
+                table.TryGetProperty("Rows", out var rows) &&
+                rows.TryGetProperty("results", out var rowsResults))
             {
-                resultsElement = rows;
-                _logger.LogInformation("Found results using modern format");
+                rowsElement = rowsResults;
+                _logger.LogInformation("Found results using SharePoint REST API format with 'd' wrapper");
+                
+                // Also get total row count if available
+                if (relevantResults.TryGetProperty("TotalRows", out var totalRowsProperty))
+                {
+                    response.TotalResults = totalRowsProperty.GetInt32();
+                }
             }
-            // Try legacy format with 'd' wrapper
-            else if (jsonElement.TryGetProperty("d", out var dWrapper) &&
-                     dWrapper.TryGetProperty("query", out var query) &&
-                     query.TryGetProperty("PrimaryQueryResult", out var legacyPrimary) &&
-                     legacyPrimary.TryGetProperty("RelevantResults", out var legacyRelevant) &&
-                     legacyRelevant.TryGetProperty("Table", out var legacyTable) &&
-                     legacyTable.TryGetProperty("Rows", out var legacyRows))
+            // Try without 'd' wrapper (direct format)
+            else if (jsonElement.TryGetProperty("query", out var directQuery) &&
+                     directQuery.TryGetProperty("PrimaryQueryResult", out var directPrimary) &&
+                     directPrimary.TryGetProperty("RelevantResults", out var directRelevant) &&
+                     directRelevant.TryGetProperty("Table", out var directTable) &&
+                     directTable.TryGetProperty("Rows", out var directRows) &&
+                     directRows.TryGetProperty("results", out var directRowsResults))
             {
-                resultsElement = legacyRows;
-                _logger.LogInformation("Found results using legacy format with 'd' wrapper");
+                rowsElement = directRowsResults;
+                _logger.LogInformation("Found results using direct SharePoint REST API format");
+                
+                if (directRelevant.TryGetProperty("TotalRows", out var directTotalRows))
+                {
+                    response.TotalResults = directTotalRows.GetInt32();
+                }
             }
             else
             {
-                _logger.LogWarning("Could not find results in expected format. Response structure: {Keys}",
+                _logger.LogWarning("Could not find results in expected SharePoint format. Response structure: {Keys}",
                     string.Join(", ", jsonElement.EnumerateObject().Select(p => p.Name)));
+                
+                // Log the actual JSON structure for debugging
+                var debugJson = JsonSerializer.Serialize(jsonElement, new JsonSerializerOptions { WriteIndented = true });
+                _logger.LogDebug("Full response structure: {Json}", debugJson);
                 return response; // Return empty response
             }
 
-            if (resultsElement.HasValue && resultsElement.Value.ValueKind == JsonValueKind.Array)
+            if (rowsElement.HasValue && rowsElement.Value.ValueKind == JsonValueKind.Array)
             {
-                foreach (var row in resultsElement.Value.EnumerateArray())
+                _logger.LogInformation("Processing {Count} result rows", rowsElement.Value.GetArrayLength());
+
+                foreach (var row in rowsElement.Value.EnumerateArray())
                 {
                     var site = new SharePointSite();
 
-                    if (row.TryGetProperty("Cells", out var cells))
+                    // Navigate to Cells.results array
+                    if (row.TryGetProperty("Cells", out var cellsWrapper) &&
+                        cellsWrapper.TryGetProperty("results", out var cellsArray))
                     {
-                        foreach (var cell in cells.EnumerateArray())
+                        foreach (var cell in cellsArray.EnumerateArray())
                         {
                             if (cell.TryGetProperty("Key", out var keyProp) &&
                                 cell.TryGetProperty("Value", out var valueProp))
                             {
                                 var key = keyProp.GetString();
-                                var value = valueProp.GetString();
+                                
+                                // Handle null values properly
+                                string value = null;
+                                if (valueProp.ValueKind == JsonValueKind.String)
+                                {
+                                    value = valueProp.GetString();
+                                }
+                                else if (valueProp.ValueKind == JsonValueKind.Null)
+                                {
+                                    value = null;
+                                }
+                                else
+                                {
+                                    value = valueProp.ToString();
+                                }
 
                                 switch (key)
                                 {
@@ -387,13 +474,19 @@ public class SharePointSearchService : ISharePointSearchService
                                         site.Url = value ?? "";
                                         break;
                                     case "Description":
+                                    case "SiteDescription":
                                         site.Description = value ?? "";
                                         break;
-                                    case "Created":
-                                        if (!string.IsNullOrEmpty(value) && DateTime.TryParse(value, out DateTime created))
-                                            site.Created = created;
+                                    case "Write":
+                                    case "LastModifiedTime":
+                                        if (!string.IsNullOrEmpty(value) && DateTime.TryParse(value, out DateTime modified))
+                                            site.Created = modified;
+                                        break;
+                                    case "WebTemplate":
+                                        site.WebTemplate = value ?? "";
                                         break;
                                     case "CN365TemplateIdOWSText":
+                                    case "CN365TemplateId":
                                         site.TemplateId = value ?? "";
                                         break;
                                 }
@@ -401,15 +494,33 @@ public class SharePointSearchService : ISharePointSearchService
                         }
                     }
 
-                    // Only add sites that have at least a title or URL
-                    if (!string.IsNullOrEmpty(site.Title) || !string.IsNullOrEmpty(site.Url))
+                    // Only add sites that have at least a title and URL
+                    if (!string.IsNullOrEmpty(site.Title) && !string.IsNullOrEmpty(site.Url))
                     {
                         response.Sites.Add(site);
+                        _logger.LogDebug("Added site: {Title} - {Url}", site.Title, site.Url);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Skipped site due to missing title or URL: Title='{Title}', Url='{Url}'", 
+                            site.Title, site.Url);
                     }
                 }
 
-                response.TotalResults = response.Sites.Count;
-                _logger.LogInformation("Successfully parsed {Count} SharePoint sites", response.TotalResults);
+                // If we didn't get TotalResults from the API response, use the actual count
+                if (response.TotalResults == 0)
+                {
+                    response.TotalResults = response.Sites.Count;
+                }
+
+                response.HasMore = response.Sites.Count < response.TotalResults;
+                
+                _logger.LogInformation("Successfully parsed {Count} SharePoint sites out of {Total} total results", 
+                    response.Sites.Count, response.TotalResults);
+            }
+            else
+            {
+                _logger.LogWarning("Rows element is not an array or is null");
             }
         }
         catch (Exception ex)
