@@ -55,16 +55,14 @@ public class EmailCardData
     public string Id { get; set; } = string.Empty;
     public string Subject { get; set; } = string.Empty;
     public string From { get; set; } = string.Empty;
-    public string FromEmail { get; set; } = string.Empty;
-    public string ReceivedDate { get; set; } = string.Empty;
-    public DateTime? ReceivedDateTime { get; set; }
+    public string BodyPreview { get; set; } = string.Empty;
+    public DateTime ReceivedDateTime { get; set; }
+    public string ReceivedDateFormatted { get; set; } = string.Empty;
     public bool IsRead { get; set; }
-    public string Importance { get; set; } = string.Empty;
-    public string Preview { get; set; } = string.Empty;
-    public string? WebLink { get; set; }
+    public bool HasAttachments { get; set; }
     public string? MatchReason { get; set; }
+    public string WebLink { get; set; } = string.Empty;
     public string ImportanceColor { get; set; } = string.Empty;
-    public string ReadStatusColor { get; set; } = string.Empty;
 }
 
 public class CalendarCardData
@@ -84,4 +82,13 @@ public class AttendeeData
     public string Name { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string ResponseStatus { get; set; } = string.Empty;
+}
+
+public class SharePointCardData
+{
+    public string Title { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string Created { get; set; } = string.Empty;
+    public string WebTemplate { get; set; } = string.Empty;
+    public string? Description { get; set; }
 } 

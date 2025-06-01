@@ -8,7 +8,7 @@ interface EmailItem {
   receivedDate: string;
   receivedDateTime?: string;
   isRead: boolean;
-  importance: string;
+  importance?: string;
   preview: string;
   webLink?: string;
   matchReason?: string;
@@ -21,8 +21,11 @@ interface EmailCardProps {
 }
 
 // Helper functions moved outside component for better performance
-const getImportanceIcon = (importance: string) => {
-  switch (importance.toLowerCase()) {
+const getImportanceIcon = (importance?: string) => {
+  // Safety check: handle undefined, null, or empty values
+  const safeImportance = importance && typeof importance === 'string' ? importance.toLowerCase() : 'normal';
+  
+  switch (safeImportance) {
     case "high":
       return (
         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
@@ -35,7 +38,7 @@ const getImportanceIcon = (importance: string) => {
           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
         </svg>
       );
-    default:
+    default: // normal or any other value
       return (
         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
           <path fillRule="evenodd" d="M3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
@@ -137,10 +140,10 @@ const EmailItem: React.FC<{ email: EmailItem; index: number }> = React.memo(({ e
                   color: email.importanceColor,
                   border: `1px solid ${email.importanceColor}40`,
                 }}
-                title={`Email importance: ${email.importance}`}
+                title={`Email importance: ${email.importance || 'Normal'}`}
               >
                 {getImportanceIcon(email.importance)}
-                <span className="ml-1">{email.importance}</span>
+                <span className="ml-1">{email.importance || 'Normal'}</span>
               </span>
 
               {/* Match Reason for Search Results */}

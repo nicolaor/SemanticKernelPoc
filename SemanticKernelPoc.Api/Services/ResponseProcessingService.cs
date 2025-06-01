@@ -29,7 +29,9 @@ public class ResponseProcessingService : IResponseProcessingService
 
     public ChatResponse ProcessResponse(string content, string sessionId, string userId, string userName)
     {
-        _logger.LogInformation("Processing response content: {Content}", content);
+        _logger.LogInformation("=== RESPONSE PROCESSING START ===");
+        _logger.LogInformation("Input content length: {Length} characters", content.Length);
+        _logger.LogInformation("Input content: {Content}", content);
         
         var response = new ChatResponse
         {
@@ -43,10 +45,11 @@ public class ResponseProcessingService : IResponseProcessingService
         };
 
         // Try to extract card data
+        _logger.LogInformation("Attempting to extract card data...");
         var cardData = ExtractCardData(content);
         if (cardData != null)
         {
-            _logger.LogInformation("Extracted card data: Type={Type}, Count={Count}", cardData.Type, cardData.Count);
+            _logger.LogInformation("Successfully extracted card data: Type={Type}, Count={Count}", cardData.Type, cardData.Count);
             response.Cards = cardData;
             response.Metadata = new ResponseMetadata
             {
@@ -54,14 +57,19 @@ public class ResponseProcessingService : IResponseProcessingService
             };
             
             // Clean the content - remove the card data part
+            _logger.LogInformation("Cleaning content from card data...");
+            var originalContent = response.Content;
             response.Content = CleanContentFromCardData(content);
+            _logger.LogInformation("Content cleaned - Original length: {OriginalLength}, Cleaned length: {CleanedLength}", 
+                originalContent.Length, response.Content.Length);
             _logger.LogInformation("Cleaned content: {CleanedContent}", response.Content);
         }
         else
         {
-            _logger.LogInformation("No card data found in content");
+            _logger.LogInformation("No card data found in content - content will remain unchanged");
         }
 
+        _logger.LogInformation("=== RESPONSE PROCESSING END ===");
         return response;
     }
 
@@ -170,6 +178,36 @@ public class ResponseProcessingService : IResponseProcessingService
                 }
             }
 
+            // Check for SharePoint cards
+            if (content.Contains("SHAREPOINT_CARDS:"))
+            {
+                _logger.LogInformation("Found SHAREPOINT_CARDS pattern in content");
+                var sharePointData = ExtractJsonData(content, "SHAREPOINT_CARDS:");
+                if (sharePointData != null)
+                {
+                    _logger.LogInformation("Extracted SharePoint JSON data: {SharePointData}", sharePointData);
+                    var sharePointSites = JsonSerializer.Deserialize<List<SharePointCardData>>(sharePointData, _jsonOptions);
+                    if (sharePointSites != null)
+                    {
+                        _logger.LogInformation("Successfully deserialized {Count} SharePoint sites", sharePointSites.Count);
+                        return new CardData
+                        {
+                            Type = "sharepoint",
+                            Data = sharePointSites,
+                            Count = sharePointSites.Count
+                        };
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Failed to deserialize SharePoint data");
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Failed to extract SharePoint JSON data");
+                }
+            }
+
             // Check for capabilities
             if (content.Contains("I can assist you with a variety of tasks") || 
                 content.Contains("Calendar Management") || 
@@ -266,30 +304,27 @@ public class ResponseProcessingService : IResponseProcessingService
 
     private string CleanContentFromCardData(string content)
     {
-        // Remove card data lines but keep any explanatory text
+        // Remove card data lines and response format indicators but keep any explanatory text
         var patterns = new[]
         {
             @"TASK_CARDS:.*",
             @"EMAIL_CARDS:.*",
-            @"CALENDAR_CARDS:.*"
+            @"CALENDAR_CARDS:.*",
+            @"SHAREPOINT_CARDS:.*",
+            @"DISPLAY_CARDS:.*",
+            @"DISPLAY_TEXT:.*",
+            @"DISPLAY_MIXED:.*"
         };
 
-        var cleanedContent = content;
+        var result = content;
         foreach (var pattern in patterns)
         {
-            cleanedContent = Regex.Replace(cleanedContent, pattern, "", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+            result = Regex.Replace(result, pattern, "", RegexOptions.IgnoreCase | RegexOptions.Multiline);
         }
 
-        // Clean up extra whitespace
-        cleanedContent = Regex.Replace(cleanedContent, @"\n\s*\n", "\n", RegexOptions.Multiline);
-        cleanedContent = cleanedContent.Trim();
-
-        // If content is empty after cleaning, provide a default message
-        if (string.IsNullOrWhiteSpace(cleanedContent))
-        {
-            cleanedContent = "Here are your results:";
-        }
-
-        return cleanedContent;
+        // Clean up multiple blank lines
+        result = Regex.Replace(result, @"\n\s*\n\s*\n", "\n\n");
+        
+        return result.Trim();
     }
 } 

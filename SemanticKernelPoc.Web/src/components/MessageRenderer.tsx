@@ -2,8 +2,9 @@ import React from "react";
 import CalendarCard from "./CalendarCard";
 import NoteCard from "./NoteCard";
 import EmailCard from "./EmailCard";
+import SharePointCard from "./SharePointCard";
 import CapabilitiesCard from "./CapabilitiesCard";
-import type { ChatMessage, TaskCardData, EmailCardData } from "../types/chat";
+import type { ChatMessage, TaskCardData, EmailCardData, SharePointCardData } from "../types/chat";
 
 interface MessageRendererProps {
   message: ChatMessage;
@@ -40,6 +41,10 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({ message }) => {
             TimeRange: cards.timeRange || "recent",
             Events: cards.data as any[]
           }} />
+        )}
+        
+        {cards.type === "sharepoint" && (
+          <SharePointCard sites={cards.data as SharePointCardData[]} />
         )}
         
         {cards.type === "capabilities" && (
@@ -110,6 +115,22 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({ message }) => {
         }
       } catch (error) {
         console.error("Failed to parse legacy email data:", error);
+      }
+    }
+
+    if (content.startsWith("SHAREPOINT_CARDS:")) {
+      try {
+        const jsonData = content.replace("SHAREPOINT_CARDS:", "").trim();
+        const sharePointData = JSON.parse(jsonData);
+        if (Array.isArray(sharePointData)) {
+          return (
+            <div className="space-y-4">
+              <SharePointCard sites={sharePointData} />
+            </div>
+          );
+        }
+      } catch (error) {
+        console.error("Failed to parse legacy SharePoint data:", error);
       }
     }
   }

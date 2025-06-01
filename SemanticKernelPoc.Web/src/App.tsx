@@ -12,6 +12,7 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isClearingConversation, setIsClearingConversation] = useState(false);
   const [shouldFocus, setShouldFocus] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -164,6 +165,73 @@ function App() {
     }
   };
 
+  const handleClearConversation = async () => {
+    if (!userProfile || isLoading || isClearingConversation || messages.length === 0) return;
+
+    // Show confirmation dialog
+    if (!window.confirm("Are you sure you want to clear this conversation? This action cannot be undone.")) {
+      return;
+    }
+
+    setIsClearingConversation(true);
+
+    try {
+      // Get access token
+      const accounts = await instance.getAllAccounts();
+      if (accounts.length === 0) {
+        throw new Error("No authenticated accounts found");
+      }
+
+      const response = await instance.acquireTokenSilent({
+        ...loginRequest,
+        account: accounts[0],
+      });
+
+      if (!response.accessToken) {
+        throw new Error("Failed to acquire access token");
+      }
+
+      // Generate the current session ID (same logic as in handleSendMessage)
+      const sessionId = `session_${userProfile.userId}_${new Date().toISOString().split('T')[0]}`;
+
+      // Call the clear conversation API
+      await apiService.clearConversation(sessionId, response.accessToken);
+
+      // Clear messages from UI
+      setMessages([]);
+      
+      // Focus the input after clearing
+      setShouldFocus(true);
+
+    } catch (error) {
+      console.error("Failed to clear conversation:", error);
+      
+      // Show error message
+      let errorContent = "Failed to clear conversation. Please try again.";
+
+      if (error instanceof ApiConnectionError) {
+        errorContent = `🔌 **Connection Error**\n\n${error.message}\n\nPlease ensure the API server is running.`;
+      } else if (error instanceof Error) {
+        errorContent = `❌ **Error**\n\n${error.message}`;
+      }
+
+      // Add error message to chat
+      const errorMessage: ChatMessage = {
+        id: Date.now().toString() + "_clear_error",
+        sessionId: `session_${userProfile.userId}_${new Date().toISOString().split('T')[0]}`,
+        content: errorContent,
+        userId: "ai-assistant",
+        userName: "AI Assistant",
+        timestamp: new Date().toISOString(),
+        isAiResponse: true,
+      };
+
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsClearingConversation(false);
+    }
+  };
+
   return (
     <div
       className="h-screen flex flex-col overflow-hidden"
@@ -296,12 +364,45 @@ function App() {
                 borderBottom: "1px solid var(--border-primary)",
               }}
             >
-              <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>
-                AI Assistant
-              </h2>
-              <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                Powered by Semantic Kernel
-              </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>
+                    AI Assistant
+                  </h2>
+                  <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                    Powered by Semantic Kernel
+                  </p>
+                </div>
+                {messages.length > 0 && (
+                  <button
+                    onClick={handleClearConversation}
+                    className="flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{
+                      color: "var(--text-secondary)",
+                      border: "1px solid var(--border-primary)",
+                      background: "var(--card-bg)",
+                    }}
+                    onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.background = "var(--bg-tertiary)")}
+                    onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.background = "var(--card-bg)")}
+                    disabled={!userProfile || isLoading || isClearingConversation}
+                    title="Clear conversation"
+                  >
+                    {isClearingConversation ? (
+                      <>
+                        <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin"></div>
+                        <span>Clearing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1-1H9a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        <span>Clear</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
             <div className={`flex-1 px-4 py-1 ${messages.length === 0 ? "overflow-hidden" : "overflow-y-auto space-y-3"}`}>
               {messages.length === 0 ? (

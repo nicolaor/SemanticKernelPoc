@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using SemanticKernelPoc.McpServer.Services;
 using System.ComponentModel;
+using System.Text.Json;
 
 namespace SemanticKernelPoc.McpServer.Tools;
 
@@ -197,33 +198,21 @@ public class SharePointSearchTool
             return "No CoffeeNet sites found matching the search criteria.";
         }
 
-        var result = $"Found {response.Sites.Count} CoffeeNet sites";
-        if (response.HasMore)
+        // Format as JSON cards for the frontend
+        var sharePointCards = response.Sites.Select(site => new
         {
-            result += $" (showing first {response.Sites.Count} of {response.TotalResults} total results)";
-        }
-        result += ":\n\n";
+            title = site.Title,
+            url = site.Url,
+            created = site.Created.ToString("yyyy-MM-dd"),
+            webTemplate = site.WebTemplate,
+            description = site.Description
+        }).ToList();
 
-        foreach (var site in response.Sites)
-        {
-            result += $"**{site.Title}**\n";
-            result += $"URL: {site.Url}\n";
-            result += $"Created: {site.Created:yyyy-MM-dd}\n";
-            result += $"CN365 Template ID: {site.TemplateId}\n";
+        var result = System.Text.Json.JsonSerializer.Serialize(sharePointCards, new JsonSerializerOptions 
+        { 
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase 
+        });
 
-            if (!string.IsNullOrEmpty(site.Description))
-            {
-                result += $"Description: {site.Description}\n";
-            }
-
-            if (!string.IsNullOrEmpty(site.WebTemplate))
-            {
-                result += $"Web Template: {site.WebTemplate}\n";
-            }
-
-            result += "\n---\n\n";
-        }
-
-        return result;
+        return $"SHAREPOINT_CARDS: {result}";
     }
 }

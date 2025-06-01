@@ -110,7 +110,11 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                     }).ToList();
 
                     var filterDescription = BuildFilterDescription(timePeriod, readStatus, importance);
-                    return $"EMAIL_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
+                    var analysisResult = $"EMAIL_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
+                    _logger.LogInformation("=== MAIL PLUGIN RETURNING ANALYSIS ===");
+                    _logger.LogInformation("Analysis result: {Result}", analysisResult);
+                    _logger.LogInformation("=== MAIL PLUGIN ANALYSIS END ===");
+                    return analysisResult;
                 }
                 else
                 {
@@ -139,7 +143,12 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                     }).ToList();
 
                     var filterDescription = BuildFilterDescription(timePeriod, readStatus, importance);
-                    return $"EMAIL_CARDS: {JsonSerializer.Serialize(emailCards, new JsonSerializerOptions { WriteIndented = false })}";
+                    var cardResult = $"EMAIL_CARDS: {JsonSerializer.Serialize(emailCards, new JsonSerializerOptions { WriteIndented = false })}";
+                    _logger.LogInformation("=== MAIL PLUGIN RETURNING CARDS ===");
+                    _logger.LogInformation("Number of email cards: {Count}", emailCards.Count);
+                    _logger.LogInformation("Card result: {Result}", cardResult);
+                    _logger.LogInformation("=== MAIL PLUGIN CARDS END ===");
+                    return cardResult;
                 }
             }
 
@@ -366,7 +375,7 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
 
             return sentItems?.Value?.Any(msg =>
                 msg.ToRecipients?.Any(recipient =>
-                    recipient.EmailAddress?.Address?.Equals(toEmail, StringComparison.OrdinalIgnoreCase) == true) == true) == true;
+                    recipient.EmailAddress?.Address?.Equals(toEmail, StringComparison.OrdinalIgnoreCase) == true) == true) ?? false;
         }
         catch
         {

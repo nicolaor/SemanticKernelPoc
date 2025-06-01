@@ -13,7 +13,7 @@ export interface ChatMessage {
 }
 
 export interface CardData {
-  type: string; // "tasks", "emails", "calendar", "capabilities"
+  type: string; // "tasks", "emails", "calendar", "sharepoint", "capabilities"
   data: any;
   count: number;
   userName?: string;
@@ -75,4 +75,12 @@ export interface AttendeeData {
   name: string;
   email: string;
   responseStatus: string;
+}
+
+export interface SharePointCardData {
+  title: string;
+  url: string;
+  created: string;
+  webTemplate: string;
+  description?: string;
 }

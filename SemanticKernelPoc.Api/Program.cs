@@ -55,6 +55,9 @@ builder.Services.AddSingleton<IConversationMemoryService, InMemoryConversationSe
 // Add response processing service for structured responses
 builder.Services.AddScoped<IResponseProcessingService, ResponseProcessingService>();
 
+// Add intent detection service for structured output
+builder.Services.AddScoped<IIntentDetectionService, IntentDetectionService>();
+
 // Add Graph Service for plugins (now using manual OBO approach)
 builder.Services.AddScoped<IGraphService, GraphService>();
 

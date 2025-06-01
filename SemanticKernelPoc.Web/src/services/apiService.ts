@@ -73,7 +73,7 @@ export const apiService = {
 
   async sendMessage(message: ChatMessage, accessToken: string): Promise<ChatMessage> {
     try {
-      const response = await axios.post(`${API_BASE_URL}/chat/send`, message, {
+      const response = await axios.post(`${API_BASE_URL}/Chat`, message, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
@@ -83,6 +83,19 @@ export const apiService = {
       return response.data;
     } catch (error) {
       console.error("Failed to send message:", error);
+      return handleApiError(error);
+    }
+  },
+
+  async clearConversation(sessionId: string, accessToken: string): Promise<void> {
+    try {
+      await axios.delete(`${API_BASE_URL}/Chat/sessions/${sessionId}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+    } catch (error) {
+      console.error("Failed to clear conversation:", error);
       return handleApiError(error);
     }
   },
