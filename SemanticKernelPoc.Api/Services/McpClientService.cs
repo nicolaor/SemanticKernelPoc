@@ -9,6 +9,16 @@ public interface IMcpClientService
     Task<string> SearchCoffeeNetSitesAsync(string userToken, string query = null, string createdAfter = null, string createdBefore = null, int maxResults = 50);
     Task<string> SearchRecentCoffeeNetSitesAsync(string userToken, string query = null, int daysBack = 30);
     Task<string> FindCoffeeNetSitesByKeywordAsync(string userToken, string keywords, int maxResults = 20);
+    Task<string> SearchCoffeeNetSitesAdvancedAsync(
+        string userToken, 
+        string query = null, 
+        string timePeriod = null, 
+        List<string> keywords = null, 
+        string searchScope = "all", 
+        string sortBy = "relevance", 
+        string sortOrder = "desc", 
+        bool exactMatch = false, 
+        int maxResults = 20);
     Task<bool> IsServerRunningAsync();
 }
 
@@ -117,6 +127,43 @@ public class McpClientService : IMcpClientService, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error calling FindCoffeeNetSitesByKeyword tool");
+            return $"Error: {ex.Message}";
+        }
+    }
+
+    public async Task<string> SearchCoffeeNetSitesAdvancedAsync(
+        string userToken, 
+        string query = null, 
+        string timePeriod = null, 
+        List<string> keywords = null, 
+        string searchScope = "all", 
+        string sortBy = "relevance", 
+        string sortOrder = "desc", 
+        bool exactMatch = false, 
+        int maxResults = 20)
+    {
+        try
+        {
+            await EnsureClientConnectedAsync();
+
+            var result = await _mcpClient.CallToolAsync("SearchCoffeeNetSitesAdvanced", new Dictionary<string, object>
+            {
+                ["userToken"] = userToken,
+                ["query"] = query ?? string.Empty,
+                ["timePeriod"] = timePeriod ?? string.Empty,
+                ["keywords"] = keywords ?? new List<string>(),
+                ["searchScope"] = searchScope ?? string.Empty,
+                ["sortBy"] = sortBy ?? string.Empty,
+                ["sortOrder"] = sortOrder ?? string.Empty,
+                ["exactMatch"] = exactMatch,
+                ["maxResults"] = maxResults
+            });
+
+            return result?.Content?.FirstOrDefault()?.Text ?? "No results returned";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calling SearchCoffeeNetSitesAdvanced tool");
             return $"Error: {ex.Message}";
         }
     }

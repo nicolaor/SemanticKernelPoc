@@ -137,6 +137,59 @@ public class SharePointSearchTool
         }
     }
 
+    [McpServerTool]
+    [Description("Advanced search for CoffeeNet (CN365) sites in SharePoint with intelligent parsing of user intent including time periods, keywords, sorting, and search scope options.")]
+    public async Task<string> SearchCoffeeNetSitesAdvanced(
+        [Description("User access token for authentication")] string userToken,
+        [Description("Natural language search query that will be intelligently parsed for time periods and keywords")] string query = null,
+        [Description("Specific time period: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year', or patterns like 'last_7_days'")] string timePeriod = null,
+        [Description("List of specific keywords to search for")] List<string> keywords = null,
+        [Description("Search scope: 'title', 'description', 'title_and_description', or 'all' (default)")] string searchScope = "all",
+        [Description("Sort by: 'relevance', 'created', 'modified', or 'title'")] string sortBy = "relevance",
+        [Description("Sort order: 'desc' or 'asc'")] string sortOrder = "desc",
+        [Description("Whether to use exact phrase matching")] bool exactMatch = false,
+        [Description("Maximum number of results to return (default: 20, max: 500)")] int maxResults = 20)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(userToken))
+            {
+                return "Error: User token is required for authentication.";
+            }
+
+            _logger.LogInformation("Advanced CoffeeNet search - Query: {Query}, TimePeriod: {TimePeriod}, Keywords: {Keywords}, Scope: {SearchScope}, Sort: {SortBy} {SortOrder}",
+                query, timePeriod, string.Join(",", keywords ?? new List<string>()), searchScope, sortBy, sortOrder);
+
+            // Validate and constrain max results
+            maxResults = Math.Min(Math.Max(maxResults, 1), 500);
+
+            // Create enhanced search request
+            var searchRequest = new SharePointSearchRequest
+            {
+                Query = query ?? string.Empty,
+                TimePeriod = timePeriod ?? string.Empty,
+                Keywords = keywords ?? new List<string>(),
+                SearchScope = searchScope ?? "all",
+                SortBy = sortBy ?? "relevance",
+                SortOrder = sortOrder ?? "desc",
+                ExactMatch = exactMatch,
+                MaxResults = maxResults
+            };
+
+            var searchResponse = await _sharePointSearchService.SearchCoffeeNetSitesAsync(searchRequest, userToken);
+
+            var result = FormatSearchResults(searchResponse);
+
+            _logger.LogInformation("Advanced CoffeeNet search completed successfully. Found {Count} sites.", searchResponse.Sites.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in advanced CoffeeNet search");
+            return $"Error in advanced search: {ex.Message}";
+        }
+    }
+
     private string FormatSearchResults(SharePointSearchResponse response)
     {
         if (!response.Sites.Any())
