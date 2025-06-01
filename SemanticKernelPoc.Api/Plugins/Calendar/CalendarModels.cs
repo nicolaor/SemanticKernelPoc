@@ -9,7 +9,7 @@ public record CalendarEventResponse(
     bool IsAllDay,
     string Id,
     int? AttendeeCount = null,
-    string WebLink = null,
+    string WebLink = "",
     List<AttendeeInfo> Attendees = null
 );
 

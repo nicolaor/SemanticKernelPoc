@@ -11,8 +11,8 @@ public class ChatResponse
     public DateTime Timestamp { get; set; }
     
     // New structured data fields
-    public CardData? Cards { get; set; }
-    public ResponseMetadata? Metadata { get; set; }
+    public CardData Cards { get; set; }
+    public ResponseMetadata Metadata { get; set; }
 }
 
 public class CardData
@@ -20,15 +20,15 @@ public class CardData
     public string Type { get; set; } = string.Empty; // "tasks", "emails", "calendar", "capabilities"
     public object Data { get; set; } = new object();
     public int Count { get; set; }
-    public string? UserName { get; set; }
-    public string? TimeRange { get; set; }
+    public string UserName { get; set; }
+    public string TimeRange { get; set; }
 }
 
 public class ResponseMetadata
 {
     public bool HasCards { get; set; }
-    public string? OriginalQuery { get; set; }
-    public List<string>? FunctionsUsed { get; set; }
+    public string OriginalQuery { get; set; }
+    public List<string> FunctionsUsed { get; set; }
     public TimeSpan? ProcessingTime { get; set; }
 }
 
@@ -41,10 +41,10 @@ public class TaskCardData
     public string Status { get; set; } = string.Empty;
     public string Priority { get; set; } = string.Empty;
     public DateTime? DueDate { get; set; }
-    public string? DueDateFormatted { get; set; }
+    public string DueDateFormatted { get; set; }
     public string Created { get; set; } = string.Empty;
     public bool IsCompleted { get; set; }
-    public string? MatchReason { get; set; }
+    public string MatchReason { get; set; }
     public string WebLink { get; set; } = string.Empty;
     public string PriorityColor { get; set; } = string.Empty;
     public string StatusColor { get; set; } = string.Empty;
@@ -60,7 +60,7 @@ public class EmailCardData
     public string ReceivedDateFormatted { get; set; } = string.Empty;
     public bool IsRead { get; set; }
     public bool HasAttachments { get; set; }
-    public string? MatchReason { get; set; }
+    public string MatchReason { get; set; }
     public string WebLink { get; set; } = string.Empty;
     public string ImportanceColor { get; set; } = string.Empty;
 }
@@ -74,7 +74,7 @@ public class CalendarCardData
     public string Organizer { get; set; } = string.Empty;
     public bool IsAllDay { get; set; }
     public string Id { get; set; } = string.Empty;
-    public List<AttendeeData>? Attendees { get; set; }
+    public List<AttendeeData> Attendees { get; set; }
 }
 
 public class AttendeeData
@@ -90,5 +90,5 @@ public class SharePointCardData
     public string Url { get; set; } = string.Empty;
     public string Created { get; set; } = string.Empty;
     public string WebTemplate { get; set; } = string.Empty;
-    public string? Description { get; set; }
+    public string Description { get; set; }
 } 

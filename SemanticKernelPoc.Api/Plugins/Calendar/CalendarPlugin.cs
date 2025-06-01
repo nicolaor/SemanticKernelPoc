@@ -11,8 +11,8 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
     private static CalendarEventResponse CreateCalendarEventResponse(Event evt)
     {
         // Parse and format the dates to ensure they're in a format JavaScript can understand
-        string? startDateTime = null;
-        string? endDateTime = null;
+        string startDateTime = null;
+        string endDateTime = null;
         
         if (evt.Start?.DateTime != null)
         {

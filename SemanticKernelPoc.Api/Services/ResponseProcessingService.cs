@@ -230,7 +230,7 @@ public class ResponseProcessingService : IResponseProcessingService
         return null;
     }
 
-    private string? ExtractJsonData(string content, string prefix)
+    private string ExtractJsonData(string content, string prefix)
     {
         try
         {

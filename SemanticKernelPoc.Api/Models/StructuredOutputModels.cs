@@ -32,7 +32,7 @@ public class StructuredTaskResponse : StructuredAIResponse
 {
     [Description("List of tasks when the user wants to see task cards")]
     [JsonPropertyName("tasks")]
-    public List<TaskCardData>? Tasks { get; set; }
+    public List<TaskCardData> Tasks { get; set; }
 
     [Description("Number of tasks found")]
     [JsonPropertyName("taskCount")]
@@ -59,7 +59,7 @@ public class StructuredEmailResponse : StructuredAIResponse
 {
     [Description("List of emails when the user wants to see email cards")]
     [JsonPropertyName("emails")]
-    public List<EmailCardData>? Emails { get; set; }
+    public List<EmailCardData> Emails { get; set; }
 
     [Description("Number of emails found")]
     [JsonPropertyName("emailCount")]
@@ -86,7 +86,7 @@ public class StructuredCalendarResponse : StructuredAIResponse
 {
     [Description("List of calendar events when the user wants to see calendar cards")]
     [JsonPropertyName("events")]
-    public List<CalendarCardData>? Events { get; set; }
+    public List<CalendarCardData> Events { get; set; }
 
     [Description("Number of events found")]
     [JsonPropertyName("eventCount")]
@@ -117,7 +117,7 @@ public class InfoResponse : StructuredAIResponse
 
     [Description("Additional details if needed")]
     [JsonPropertyName("details")]
-    public Dictionary<string, string>? Details { get; set; }
+    public Dictionary<string, string> Details { get; set; }
 
     [Description("Whether this is a success or informational message")]
     [JsonPropertyName("isSuccess")]
@@ -141,15 +141,15 @@ public class AnalysisResponse : StructuredAIResponse
 
     [Description("Key insights from the analysis")]
     [JsonPropertyName("insights")]
-    public List<string>? Insights { get; set; }
+    public List<string> Insights { get; set; }
 
     [Description("Numerical statistics if applicable")]
     [JsonPropertyName("statistics")]
-    public Dictionary<string, object>? Statistics { get; set; }
+    public Dictionary<string, object> Statistics { get; set; }
 
     [Description("Recommendations based on the analysis")]
     [JsonPropertyName("recommendations")]
-    public List<string>? Recommendations { get; set; }
+    public List<string> Recommendations { get; set; }
 
     public AnalysisResponse()
     {
@@ -169,7 +169,7 @@ public class ErrorResponse : StructuredAIResponse
 
     [Description("Suggestions for how the user can resolve or work around the error")]
     [JsonPropertyName("suggestions")]
-    public List<string>? Suggestions { get; set; }
+    public List<string> Suggestions { get; set; }
 
     [Description("Whether the error is recoverable")]
     [JsonPropertyName("isRecoverable")]
@@ -202,7 +202,7 @@ public class UserIntent
 
     [Description("Key parameters extracted from the user query")]
     [JsonPropertyName("parameters")]
-    public Dictionary<string, string>? Parameters { get; set; }
+    public Dictionary<string, string> Parameters { get; set; }
 
     [Description("Whether the user wants to see detailed cards or just a summary")]
     [JsonPropertyName("wantsCards")]

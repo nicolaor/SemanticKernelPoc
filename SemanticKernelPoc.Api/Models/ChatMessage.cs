@@ -11,6 +11,6 @@ public class ChatMessage
     public string SessionId { get; set; } = string.Empty;
     
     // New structured data fields
-    public CardData? Cards { get; set; }
-    public ResponseMetadata? Metadata { get; set; }
+    public CardData Cards { get; set; }
+    public ResponseMetadata Metadata { get; set; }
 }
