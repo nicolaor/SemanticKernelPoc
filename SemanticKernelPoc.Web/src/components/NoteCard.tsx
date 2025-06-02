@@ -175,10 +175,10 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
             )}
 
             <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-              {/* Overdue Badge - More subtle but still noticeable design */}
+              {/* Overdue Badge - Less prominent color scheme */}
               {isOverdue && (
                 <span
-                  className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200"
+                  className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-200"
                   title={`This task is overdue since ${note.dueDateFormatted}`}
                 >
                   <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
@@ -267,8 +267,8 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
                 <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
               </svg>
               <p 
-                className={`font-medium text-sm ${isOverdue ? 'text-orange-600 font-semibold' : ''}`} 
-                style={{ color: isOverdue ? "#ea580c" : "var(--text-primary)" }} 
+                className={`font-medium text-sm ${isOverdue ? 'text-yellow-700 font-semibold' : ''}`} 
+                style={{ color: isOverdue ? "#b45309" : "var(--text-primary)" }} 
                 title={`Task due date: ${note.dueDateFormatted}${isOverdue ? ' (OVERDUE)' : ''}`}
               >
                 Due: {note.dueDateFormatted}
@@ -379,7 +379,7 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
           >
             <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3" style={{ background: "var(--bg-tertiary)" }}>
               <svg className="w-6 h-6" style={{ color: "var(--text-tertiary)" }} fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 16a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
               </svg>
             </div>
             <p style={{ color: "var(--text-secondary)" }}>No tasks found. Create some tasks in Microsoft To Do to see them here.</p>
