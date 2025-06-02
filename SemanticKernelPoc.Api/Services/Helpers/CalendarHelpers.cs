@@ -5,23 +5,6 @@ namespace SemanticKernelPoc.Api.Services.Helpers;
 public static class CalendarHelpers
 {
     /// <summary>
-    /// Format calendar events for frontend card rendering
-    /// </summary>
-    public static string FormatCalendarCardsResponse(IEnumerable<object> events, string userName, string timeRange, int totalCount)
-    {
-        var calendarResponse = new
-        {
-            Type = "calendar_events",
-            Count = totalCount,
-            UserName = userName,
-            TimeRange = timeRange,
-            Events = events
-        };
-
-        return $"CALENDAR_CARDS:{JsonSerializer.Serialize(calendarResponse, new JsonSerializerOptions { WriteIndented = false })}";
-    }
-
-    /// <summary>
     /// Create calendar event object for consistent formatting
     /// </summary>
     public static object CreateEventObject(
@@ -73,7 +56,7 @@ public static class CalendarHelpers
 
         // Try natural language parsing
         var normalizedInput = input.ToLower().Trim();
-        
+
         if (normalizedInput.Contains("tomorrow"))
         {
             var tomorrow = DateTime.Today.AddDays(1);
@@ -121,10 +104,10 @@ public static class CalendarHelpers
         // Find Monday of current week
         var daysFromMonday = (int)today.DayOfWeek - (int)DayOfWeek.Monday;
         if (daysFromMonday < 0) daysFromMonday += 7; // Handle Sunday
-        
+
         var monday = today.AddDays(-daysFromMonday);
         var sunday = monday.AddDays(7);
-        
+
         return (monday, sunday, $"this week ({monday:MMM dd} - {sunday.AddDays(-1):MMM dd})");
     }
 
@@ -135,7 +118,7 @@ public static class CalendarHelpers
     {
         var now = DateTime.Now;
         var today = DateTime.Today;
-        
+
         return timePeriod.ToLower() switch
         {
             "today" => (today, today.AddDays(1), $"today ({today:yyyy-MM-dd})"),
@@ -145,9 +128,9 @@ public static class CalendarHelpers
             "next_week" => (today.AddDays(7), today.AddDays(14), "next week"),
             "this_month" => (new DateTime(today.Year, today.Month, 1), new DateTime(today.Year, today.Month, 1).AddMonths(1), "this month"),
             "this_month_upcoming" => (now, new DateTime(today.Year, today.Month, 1).AddMonths(1), $"upcoming this month"),
-            _ => int.TryParse(timePeriod, out var days) ? 
-                (now, now.AddDays(days), $"next {days} days") : 
+            _ => int.TryParse(timePeriod, out var days) ?
+                (now, now.AddDays(days), $"next {days} days") :
                 (now, now.AddDays(7), "next 7 days")
         };
     }
-} 
+}

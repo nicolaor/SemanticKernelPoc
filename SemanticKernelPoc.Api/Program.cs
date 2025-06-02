@@ -5,32 +5,89 @@ using Microsoft.SemanticKernel;
 using SemanticKernelPoc.Api.Models;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
+using SemanticKernelPoc.Api.Services;
+using SemanticKernelPoc.Api.Services.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add Azure AD authentication with token acquisition support
-builder.Services.AddMicrosoftIdentityWebApiAuthentication(builder.Configuration, "AzureAd")
-    .EnableTokenAcquisitionToCallDownstreamApi()
-    .AddMicrosoftGraph(builder.Configuration.GetSection("AzureAd"))
-    .AddInMemoryTokenCaches();
+// Add Azure AD authentication (without token acquisition - we'll handle OBO manually)
+builder.Services.AddMicrosoftIdentityWebApiAuthentication(builder.Configuration, "AzureAd");
+
+// Explicitly configure JwtBearerOptions for audience validation
+builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
+{
+    var audienceConfig = builder.Configuration.GetSection("AzureAd:Audience");
+    if (audienceConfig.Exists())
+    {
+        var audiences = audienceConfig.Get<string[]>();
+        if (audiences != null && audiences.Length > 0)
+        {
+            options.TokenValidationParameters.ValidAudiences = audiences;
+            options.TokenValidationParameters.ValidateAudience = true; // Ensure audience validation is active
+        }
+        else
+        {
+            var singleAudience = audienceConfig.Get<string>();
+            if (!string.IsNullOrEmpty(singleAudience))
+            {
+                options.TokenValidationParameters.ValidAudience = singleAudience;
+                options.TokenValidationParameters.ValidateAudience = true; // Ensure audience validation is active
+            }
+        }
+    }
+});
 
 // Configure CORS
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.WithOrigins(builder.Configuration.GetSection("AllowedOrigins").Get<string[]>() ?? Array.Empty<string>())
+        policy.WithOrigins(builder.Configuration.GetSection("AllowedOrigins").Get<string[]>() ?? [])
             .AllowAnyMethod()
             .AllowAnyHeader()
             .AllowCredentials();
     });
 });
 
-// Add Conversation Memory Service
+// Add conversation memory service
 builder.Services.AddSingleton<IConversationMemoryService, InMemoryConversationService>();
 
-// Add Graph Service for plugins
-builder.Services.AddSingleton<IGraphService, GraphService>();
+// Add Graph Service for plugins (now using manual OBO approach)
+builder.Services.AddScoped<IGraphService, GraphService>();
+
+// Add Graph Client Factory for efficient client management
+builder.Services.AddSingleton<IGraphClientFactory>(sp => 
+    new GraphClientFactory(
+        sp.GetRequiredService<ILogger<GraphClientFactory>>(), 
+        sp.GetRequiredService<IConfiguration>()));
+
+// Add shared services for refactored code
+builder.Services.AddScoped<ICardBuilderService, CardBuilderService>();
+builder.Services.AddScoped<IAnalysisModeService, AnalysisModeService>();
+builder.Services.AddScoped<ITextProcessingService, TextProcessingService>();
+
+// Add HttpClient for MCP communication
+builder.Services.AddHttpClient<IMcpClientService, McpClientService>(client =>
+{
+    // Configure HttpClient for MCP server communication
+    client.Timeout = TimeSpan.FromSeconds(30);
+})
+.ConfigurePrimaryHttpMessageHandler(() =>
+{
+    var handler = new HttpClientHandler();
+    
+    // Accept self-signed certificates in development
+    if (builder.Environment.IsDevelopment())
+    {
+        handler.ClientCertificateOptions = ClientCertificateOption.Manual;
+        handler.ServerCertificateCustomValidationCallback = (httpRequestMessage, cert, cetChain, policyErrors) => true;
+    }
+    
+    return handler;
+});
+
+// Add MCP Client Service
+builder.Services.AddScoped<IMcpClientService, McpClientService>();
 
 // Semantic Kernel configuration (global - for AI service only)
 builder.Services.AddSingleton(sp =>
@@ -39,7 +96,7 @@ builder.Services.AddSingleton(sp =>
         ?? throw new InvalidOperationException("SemanticKernel configuration is missing");
 
     var kernelBuilder = Kernel.CreateBuilder();
-    
+
     if (config.UseAzureOpenAI)
     {
         kernelBuilder.AddAzureOpenAIChatCompletion(
@@ -60,11 +117,22 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
+// Configure JSON serialization to use camelCase
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+});
+
+builder.Services.Configure<Microsoft.AspNetCore.Mvc.JsonOptions>(options =>
+{
+    options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+});
+
 // Configure Swagger with Azure AD authentication
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "SemanticKernelPoc API", Version = "v1" });
-    
+
     var clientId = builder.Configuration["AzureAd:ClientId"];
     c.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
     {

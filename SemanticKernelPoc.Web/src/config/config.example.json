@@ -1,0 +1,9 @@
+{
+  "azure": {
+    "tenantId": "your-tenant-id-here",
+    "clientId": "your-client-id-here"
+  },
+  "app": {
+    "redirectUri": "https://localhost:31337"
+  }
+} 

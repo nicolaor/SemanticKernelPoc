@@ -24,6 +24,11 @@ appsettings.*.json
 .env.production
 .env.*.local
 
+# Local configuration files (frontend)
+**/config.local.json
+**/config.local.ts
+**/config.local.js
+
 # User secrets
 secrets.json
 user-secrets.json
@@ -40,6 +45,11 @@ azure.json
 *.pfx
 apikeys.txt
 tokens.txt
+
+# Exception: Include development HTTPS certificates
+!certs/localhost.key
+!certs/localhost.crt
+!certs/localhost.pfx
 
 # IDE and editor files
 .vscode/
@@ -571,3 +581,8 @@ docs/_build/
 # - appsettings.Example.json (template with placeholder values)
 # - .env.example (template environment file)
 # - README.md (setup instructions)
+
+# Custom additions for SemanticKernelPoc
+# Runtime logs and process files
+logs/
+*.pid

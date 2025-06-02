@@ -4,61 +4,107 @@ using Microsoft.SemanticKernel;
 using System.ComponentModel;
 using System.Text.Json;
 using SemanticKernelPoc.Api.Services.Graph;
+using SemanticKernelPoc.Api.Services.Shared;
+using SharedConstants = SemanticKernelPoc.Api.Services.Shared.Constants;
 
 namespace SemanticKernelPoc.Api.Plugins.Mail;
 
 public class MailPlugin : BaseGraphPlugin
 {
-    public MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
-        : base(graphService, logger)
+    private readonly ICardBuilderService _cardBuilder;
+    private readonly IAnalysisModeService _analysisMode;
+    private readonly ITextProcessingService _textProcessor;
+
+    public MailPlugin(
+        IGraphService graphService, 
+        IGraphClientFactory graphClientFactory, 
+        ILogger<MailPlugin> logger,
+        ICardBuilderService cardBuilder,
+        IAnalysisModeService analysisMode,
+        ITextProcessingService textProcessor) 
+        : base(graphService, graphClientFactory, logger)
     {
+        _cardBuilder = cardBuilder;
+        _analysisMode = analysisMode;
+        _textProcessor = textProcessor;
     }
 
-    [KernelFunction, Description("Get recent emails (simplified)")]
-    public async Task<string> GetRecentEmails(Kernel kernel, 
-        [Description("Number of recent emails to retrieve (default 10)")] int count = 10)
+    [KernelFunction, Description("Get recent emails from the user's inbox. Use this when user asks for 'emails', 'mail', 'inbox', 'messages', 'last N emails', 'recent emails', etc. For display purposes, use analysisMode=false. For summary/analysis requests like 'summarize my emails', 'what are my emails about', 'email summary', use analysisMode=true. Keywords that trigger analysis mode: summarize, summary, analyze, analysis, what about, content overview.")]
+    public async Task<string> GetRecentEmails(Kernel kernel,
+        [Description("Number of recent emails to retrieve (default 5, max 10). Use this when user specifies 'last 2 emails', 'get 5 emails', etc.")] int count = 5,
+        [Description("Time period filter: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', or number of days like '7' for last 7 days")] string timePeriod = null,
+        [Description("Filter by read status: 'unread' for unread only, 'read' for read only, or null for all emails")] string readStatus = null,
+        [Description("Filter by importance: 'high', 'normal', 'low', or null for all importance levels")] string importance = null,
+        [Description("Analysis mode: ALWAYS set to true when user asks for summaries, analysis, or 'what are my emails about'. Set to false for listing/displaying emails. Keywords that trigger true: summarize, summary, analyze, analysis, what about, content overview.")] bool analysisMode = false)
     {
         try
         {
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
-
-            if (string.IsNullOrEmpty(userAccessToken))
+            var (success, errorMessage, graphClient, userName) = await GetAuthenticatedGraphClientAsync(kernel);
+            if (!success)
             {
-                return "Unable to access emails - user authentication required.";
+                return errorMessage;
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            // Build filters for the query
+            var filters = BuildEmailFilters(timePeriod, readStatus, importance);
 
-            // Use simplified Messages API
+            // Select appropriate fields based on analysis mode
+            var selectFields = analysisMode 
+                ? SharedConstants.GraphSelectFields.EmailWithBody
+                : SharedConstants.GraphSelectFields.EmailBasic;
+
+            // Execute the Graph API query
             var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
             {
-                requestConfig.QueryParameters.Top = Math.Min(count, 10);
-                requestConfig.QueryParameters.Orderby = new[] { "receivedDateTime desc" };
-                requestConfig.QueryParameters.Select = new[] { "subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview" };
+                requestConfig.QueryParameters.Top = Math.Min(count, SharedConstants.QueryLimits.MaxEmailCount);
+                requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
+                requestConfig.QueryParameters.Select = selectFields;
+                
+                if (filters.Any())
+                {
+                    requestConfig.QueryParameters.Filter = string.Join(" and ", filters);
+                }
             });
 
             if (messages?.Value?.Any() == true)
             {
-                var emailList = messages.Value.Select(msg => new
+                if (analysisMode)
                 {
-                    Subject = msg.Subject,
-                    From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
-                    ReceivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
-                    IsRead = msg.IsRead ?? false,
-                    Importance = msg.Importance?.ToString() ?? "Normal",
-                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview.Substring(0, 100) + "..." : msg.BodyPreview
-                });
+                    // Use the shared analysis mode service
+                    return await _analysisMode.GenerateAISummaryAsync(
+                        kernel,
+                        messages.Value,
+                        "emails",
+                        userName,
+                        msg => new
+                        {
+                            From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? SharedConstants.DefaultText.Unknown,
+                            Subject = msg.Subject ?? SharedConstants.DefaultText.NoSubject,
+                            ReceivedDate = msg.ReceivedDateTime?.ToString(SharedConstants.DateFormats.StandardDate) ?? SharedConstants.DefaultText.Unknown,
+                            Content = _textProcessor.CleanAndLimitContent(msg.Body?.Content ?? msg.BodyPreview),
+                            IsRead = msg.IsRead ?? false,
+                            Importance = msg.Importance?.ToString() ?? SharedConstants.DefaultText.Normal
+                        });
+                }
+                else
+                {
+                    // Use the shared card builder service
+                    var emailCards = _cardBuilder.BuildEmailCards(messages.Value, (msg, index) => CreateEmailCard(msg, index));
+                    var functionResponse = $"Found {emailCards.Count} recent emails for {userName}.";
 
-                return $"Recent emails for {userName}:\n" +
-                       JsonSerializer.Serialize(emailList, new JsonSerializerOptions { WriteIndented = true });
+                    _cardBuilder.SetCardData(kernel, "emails", emailCards, emailCards.Count, functionResponse);
+                    return functionResponse;
+                }
             }
-
-            return $"No recent emails found for {userName}.";
+            else
+            {
+                return $"No emails found for {userName} with the specified criteria.";
+            }
         }
         catch (Exception ex)
         {
-            return $"Error accessing emails: {ex.Message}";
+            _logger.LogError(ex, "Error retrieving emails");
+            return $"❌ Error retrieving emails: {ex.Message}";
         }
     }
 
@@ -71,17 +117,19 @@ public class MailPlugin : BaseGraphPlugin
     {
         try
         {
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
-
-            if (string.IsNullOrEmpty(userAccessToken))
+            var (success, errorMessage, graphClient, userName) = await GetAuthenticatedGraphClientAsync(kernel);
+            if (!success)
             {
-                return "Unable to create email - user authentication required.";
+                return errorMessage;
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            var validationError = ValidateEmailParameters(toEmail, subject, body);
+            if (validationError != null)
+            {
+                return validationError;
+            }
 
-            var message = new Message
+            var draft = new Message
             {
                 Subject = subject,
                 Body = new ItemBody
@@ -91,470 +139,264 @@ public class MailPlugin : BaseGraphPlugin
                 },
                 ToRecipients = new List<Recipient>
                 {
-                    new Recipient
-                    {
+                    new() {
                         EmailAddress = new EmailAddress
                         {
-                            Address = toEmail
+                            Address = toEmail.Trim()
                         }
                     }
-                }
-            };
-
-            // Set importance
-            message.Importance = importance.ToLower() switch
-            {
-                "high" => Microsoft.Graph.Models.Importance.High,
-                "low" => Microsoft.Graph.Models.Importance.Low,
-                _ => Microsoft.Graph.Models.Importance.Normal
-            };
-
-            // Create draft
-            await graphClient.Me.Messages.PostAsync(message);
-
-            return $"Successfully created email draft for {userName}:\n" +
-                   $"To: {toEmail}\n" +
-                   $"Subject: {subject}\n" +
-                   $"Importance: {importance}\n" +
-                   "Note: Email saved as draft in Outlook.";
-        }
-        catch (Exception ex)
-        {
-            return $"Error creating email draft: {ex.Message}";
-        }
-    }
-
-    [KernelFunction, Description("Send an email immediately")]
-    public async Task<string> SendEmail(Kernel kernel,
-        [Description("Recipient email address")] string toEmail,
-        [Description("Email subject")] string subject,
-        [Description("Email body content")] string body,
-        [Description("Additional recipients (CC), comma-separated (optional)")] string ccEmails = null,
-        [Description("Email importance: low, normal, or high")] string importance = "normal")
-    {
-        try
-        {
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
-
-            if (string.IsNullOrEmpty(userAccessToken))
-            {
-                return "Unable to send email - user authentication required.";
-            }
-
-            // Validate email address
-            if (string.IsNullOrWhiteSpace(toEmail) || !IsValidEmail(toEmail))
-            {
-                return $"Invalid recipient email address: '{toEmail}'. Please provide a valid email address.";
-            }
-
-            // Validate subject and body
-            if (string.IsNullOrWhiteSpace(subject))
-            {
-                return "Email subject cannot be empty. Please provide a subject for the email.";
-            }
-
-            if (string.IsNullOrWhiteSpace(body))
-            {
-                return "Email body cannot be empty. Please provide content for the email.";
-            }
-
-            var graphClient = CreateGraphClient(userAccessToken);
-
-            // First, test if we can access the mail service
-            try
-            {
-                await graphClient.Me.GetAsync();
-            }
-            catch (Exception accessEx)
-            {
-                return $"Unable to access Microsoft Graph - authentication may have expired: {accessEx.Message}";
-            }
-
-            var message = new Message
-            {
-                Subject = subject,
-                Body = new ItemBody
-                {
-                    ContentType = BodyType.Text,
-                    Content = body
                 },
-                ToRecipients = new List<Recipient>
-                {
-                    new Recipient
-                    {
-                        EmailAddress = new EmailAddress
-                        {
-                            Address = toEmail.Trim(),
-                            Name = toEmail.Trim()
-                        }
-                    }
-                }
+                Importance = ParseImportance(importance)
             };
 
-            // Add CC recipients if provided
-            if (!string.IsNullOrWhiteSpace(ccEmails))
-            {
-                var ccAddresses = ccEmails.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(email => email.Trim())
-                    .Where(email => IsValidEmail(email))
-                    .ToList();
+            var createdDraft = await graphClient.Me.Messages.PostAsync(draft);
 
-                if (ccAddresses.Any())
-                {
-                    var ccList = ccAddresses.Select(email => new Recipient
-                    {
-                        EmailAddress = new EmailAddress { Address = email, Name = email }
-                    }).ToList();
-                    message.CcRecipients = ccList;
-                }
-                else
-                {
-                    return $"Invalid CC email addresses provided: '{ccEmails}'. Please check the format.";
-                }
-            }
-
-            // Set importance
-            message.Importance = importance.ToLower() switch
-            {
-                "high" => Microsoft.Graph.Models.Importance.High,
-                "low" => Microsoft.Graph.Models.Importance.Low,
-                _ => Microsoft.Graph.Models.Importance.Normal
-            };
-
-            // Try to send the email using SendMail API
-            try
-            {
-                var sendMailRequest = new Microsoft.Graph.Me.SendMail.SendMailPostRequestBody
-                {
-                    Message = message,
-                    SaveToSentItems = true
-                };
-
-                await graphClient.Me.SendMail.PostAsync(sendMailRequest);
-
-                // Verify the email was sent by checking sent items (optional verification)
-                var sentVerification = await VerifyEmailSent(graphClient, subject, toEmail);
-
-                return $"✅ Email sent successfully from {userName}!\n" +
-                       $"📧 To: {toEmail}\n" +
-                       $"📋 Subject: {subject}\n" +
-                       $"⚡ Importance: {importance}" +
-                       (ccEmails != null ? $"\n📌 CC: {ccEmails}" : "") +
-                       $"\n📅 Sent at: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n" +
-                       $"✉️ Saved to Sent Items: Yes\n" +
-                       (sentVerification ? "🔍 Verification: Email found in sent items" : "⚠️ Verification: Could not verify in sent items (this is normal for immediate sending)");
-            }
-            catch (Microsoft.Graph.Models.ODataErrors.ODataError odataEx)
-            {
-                return $"❌ Microsoft Graph API Error sending email:\n" +
-                       $"Error Code: {odataEx.Error?.Code}\n" +
-                       $"Error Message: {odataEx.Error?.Message}\n" +
-                       $"This might indicate:\n" +
-                       $"• Missing Mail.Send permission\n" +
-                       $"• Invalid email address format\n" +
-                       $"• Mailbox access restrictions\n" +
-                       $"• Organization email policies blocking external sends";
-            }
-            catch (Exception sendEx)
-            {
-                return $"❌ Error sending email: {sendEx.Message}\n" +
-                       $"This could be due to:\n" +
-                       $"• Network connectivity issues\n" +
-                       $"• Microsoft Graph service unavailability\n" +
-                       $"• Authentication token expiration\n" +
-                       $"• Email size or content restrictions";
-            }
+            return CreateSuccessResponse("Email draft created", userName,
+                ("📧 To", toEmail),
+                ("📝 Subject", subject),
+                ("🔗 Priority", importance),
+                ("🌐 View", SharedConstants.ServiceUrls.GetOutlookMailUrl(createdDraft?.Id ?? "")));
         }
         catch (Exception ex)
         {
-            return $"❌ Unexpected error sending email: {ex.Message}\n" +
-                   $"Please check your authentication and try again.";
+            _logger.LogError(ex, "Error creating email draft");
+            return $"❌ Error creating email draft: {ex.Message}";
         }
     }
 
-    private bool IsValidEmail(string email)
-    {
-        if (string.IsNullOrWhiteSpace(email))
-            return false;
-
-        try
-        {
-            var addr = new System.Net.Mail.MailAddress(email);
-            return addr.Address == email;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task<bool> VerifyEmailSent(GraphServiceClient graphClient, string subject, string toEmail)
-    {
-        try
-        {
-            // Check sent items for the email (this might not work immediately due to Exchange sync delays)
-            var sentItems = await graphClient.Me.MailFolders["SentItems"].Messages.GetAsync(requestConfig =>
-            {
-                requestConfig.QueryParameters.Filter = $"contains(subject,'{subject}')";
-                requestConfig.QueryParameters.Top = 5;
-                requestConfig.QueryParameters.Select = new[] { "subject", "toRecipients", "sentDateTime" };
-            });
-
-            return sentItems?.Value?.Any(msg => 
-                msg.ToRecipients?.Any(r => r.EmailAddress?.Address?.Equals(toEmail, StringComparison.OrdinalIgnoreCase) == true) == true) == true;
-        }
-        catch
-        {
-            // Verification failed, but this doesn't mean the email wasn't sent
-            return false;
-        }
-    }
-
-    [KernelFunction, Description("Search emails (basic)")]
+    [KernelFunction, Description("Search emails by content, subject, sender, or keywords. Use this when user asks to 'search emails', 'find emails from [person]', 'emails about [topic]', 'emails containing [text]', etc. For display purposes, use analysisMode=false. For analysis of search results like 'summarize emails from John', use analysisMode=true. Keywords that trigger analysis mode: summarize, summary, analyze, analysis, what about, content overview.")]
     public async Task<string> SearchEmails(Kernel kernel,
-        [Description("Search query")] string searchQuery,
-        [Description("Maximum number of results (default 5)")] int maxResults = 5)
+        [Description("Search query to find in email content, subject, or sender. Can be keywords, phrases, or specific text")] string searchQuery = null,
+        [Description("Search specifically by sender name or email address. Use when user asks 'emails from John' or 'emails from john@company.com'")] string fromSender = null,
+        [Description("Search specifically in email subject line. Use when user asks 'emails with subject containing [text]'")] string subjectContains = null,
+        [Description("Time period to search within: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', or number of days")] string timePeriod = null,
+        [Description("Maximum number of results (default 5, max 10)")] int maxResults = 5,
+        [Description("Include only unread emails in search results")] bool unreadOnly = false,
+        [Description("Analysis mode: ALWAYS set to true when user asks for summaries or analysis of search results. Set to false for listing/displaying search results. Keywords that trigger true: summarize, summary, analyze, analysis, what about, content overview.")] bool analysisMode = false)
     {
         try
         {
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
-
-            if (string.IsNullOrEmpty(userAccessToken))
+            var (success, errorMessage, graphClient, userName) = await GetAuthenticatedGraphClientAsync(kernel);
+            if (!success)
             {
-                return "Unable to search emails - user authentication required.";
+                return errorMessage;
             }
 
-            if (string.IsNullOrWhiteSpace(searchQuery))
+            if (IsSearchParametersEmpty(searchQuery, fromSender, subjectContains))
             {
-                return "Please provide a search query.";
+                return "Please provide at least one search parameter: searchQuery, fromSender, or subjectContains.";
             }
 
-            var graphClient = CreateGraphClient(userAccessToken);
+            // Build search filters
+            var filters = BuildSearchFilters(searchQuery, fromSender, subjectContains, timePeriod, unreadOnly);
 
-            // Use basic filter approach
+            // Execute search
             var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
             {
-                requestConfig.QueryParameters.Filter = $"contains(subject,'{searchQuery}') or contains(from/emailAddress/name,'{searchQuery}')";
-                requestConfig.QueryParameters.Top = Math.Min(maxResults, 10);
-                requestConfig.QueryParameters.Select = new[] { "subject", "from", "receivedDateTime", "isRead", "bodyPreview" };
+                requestConfig.QueryParameters.Top = Math.Min(maxResults, SharedConstants.QueryLimits.MaxEmailCount);
+                requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
+                requestConfig.QueryParameters.Select = analysisMode 
+                    ? SharedConstants.GraphSelectFields.EmailWithBody
+                    : SharedConstants.GraphSelectFields.EmailBasic;
+                
+                if (filters.Any())
+                {
+                    requestConfig.QueryParameters.Filter = string.Join(" and ", filters);
+                }
             });
 
             if (messages?.Value?.Any() == true)
             {
-                var emailList = messages.Value.Select(msg => new
+                if (analysisMode)
                 {
-                    Subject = msg.Subject,
-                    From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
-                    ReceivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
-                    IsRead = msg.IsRead ?? false,
-                    Preview = msg.BodyPreview?.Length > 100 ? msg.BodyPreview.Substring(0, 100) + "..." : msg.BodyPreview
-                });
-
-                return $"Search results for '{searchQuery}' in {userName}'s emails:\n" +
-                       JsonSerializer.Serialize(emailList, new JsonSerializerOptions { WriteIndented = true });
-            }
-
-            return $"No emails found matching '{searchQuery}' for {userName}.";
-        }
-        catch (Exception ex)
-        {
-            return $"Error searching emails: {ex.Message}";
-        }
-    }
-
-    [KernelFunction, Description("Get email statistics")]
-    public async Task<string> GetEmailStats(Kernel kernel)
-    {
-        try
-        {
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
-
-            if (string.IsNullOrEmpty(userAccessToken))
-            {
-                return "Unable to get email statistics - user authentication required.";
-            }
-
-            var graphClient = CreateGraphClient(userAccessToken);
-
-            // Get unread count from messages
-            var unreadMessages = await graphClient.Me.Messages.GetAsync(requestConfig =>
-            {
-                requestConfig.QueryParameters.Filter = "isRead eq false";
-                requestConfig.QueryParameters.Count = true;
-                requestConfig.QueryParameters.Top = 1;
-            });
-
-            // Get total recent count
-            var allMessages = await graphClient.Me.Messages.GetAsync(requestConfig =>
-            {
-                requestConfig.QueryParameters.Top = 100;
-                requestConfig.QueryParameters.Count = true;
-            });
-
-            var stats = new
-            {
-                UnreadCount = unreadMessages?.OdataCount ?? 0,
-                TotalRecentCount = allMessages?.Value?.Count ?? 0,
-                LastChecked = DateTime.Now.ToString("yyyy-MM-dd HH:mm")
-            };
-
-            return $"Email statistics for {userName}:\n" +
-                   JsonSerializer.Serialize(stats, new JsonSerializerOptions { WriteIndented = true });
-        }
-        catch (Exception ex)
-        {
-            return $"Error getting email statistics: {ex.Message}";
-        }
-    }
-
-    [KernelFunction, Description("Check email sending permissions and access")]
-    public async Task<string> CheckEmailPermissions(Kernel kernel)
-    {
-        try
-        {
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
-
-            if (string.IsNullOrEmpty(userAccessToken))
-            {
-                return "Unable to check email permissions - user authentication required.";
-            }
-
-            var graphClient = CreateGraphClient(userAccessToken);
-
-            var results = new List<string>();
-
-            // Test 1: Can we access user profile?
-            try
-            {
-                var user = await graphClient.Me.GetAsync();
-                results.Add($"✅ User Access: {user?.DisplayName} ({user?.Mail ?? user?.UserPrincipalName})");
-            }
-            catch (Exception ex)
-            {
-                results.Add($"❌ User Access Failed: {ex.Message}");
-                return string.Join("\n", results);
-            }
-
-            // Test 2: Can we read messages?
-            try
-            {
-                var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
-                {
-                    requestConfig.QueryParameters.Top = 1;
-                });
-                results.Add($"✅ Mail Read Access: Can read messages ({messages?.Value?.Count ?? 0} test messages)");
-            }
-            catch (Exception ex)
-            {
-                results.Add($"❌ Mail Read Access Failed: {ex.Message}");
-            }
-
-            // Test 3: Can we access sent items?
-            try
-            {
-                var sentItems = await graphClient.Me.MailFolders["SentItems"].Messages.GetAsync(requestConfig =>
-                {
-                    requestConfig.QueryParameters.Top = 1;
-                });
-                results.Add($"✅ Sent Items Access: Can access sent folder");
-            }
-            catch (Exception ex)
-            {
-                results.Add($"❌ Sent Items Access Failed: {ex.Message}");
-            }
-
-            // Test 4: Can we create a draft?
-            try
-            {
-                var testDraft = new Message
-                {
-                    Subject = "Test Draft - DELETE ME",
-                    Body = new ItemBody
-                    {
-                        ContentType = BodyType.Text,
-                        Content = "This is a test draft created to check permissions. Please delete."
-                    },
-                    ToRecipients = new List<Recipient>
-                    {
-                        new Recipient
+                    return await _analysisMode.GenerateAISummaryAsync(
+                        kernel,
+                        messages.Value,
+                        "emails",
+                        userName,
+                        msg => new
                         {
-                            EmailAddress = new EmailAddress
-                            {
-                                Address = "test@example.com"
-                            }
-                        }
-                    }
-                };
-
-                var draft = await graphClient.Me.Messages.PostAsync(testDraft);
-                if (draft?.Id != null)
+                            From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? SharedConstants.DefaultText.Unknown,
+                            Subject = msg.Subject ?? SharedConstants.DefaultText.NoSubject,
+                            ReceivedDate = msg.ReceivedDateTime?.ToString(SharedConstants.DateFormats.StandardDate) ?? SharedConstants.DefaultText.Unknown,
+                            Content = _textProcessor.CleanAndLimitContent(msg.Body?.Content ?? msg.BodyPreview),
+                            MatchReason = DetermineMatchReason(msg, searchQuery, fromSender, subjectContains)
+                        });
+                }
+                else
                 {
-                    results.Add($"✅ Draft Creation: Can create drafts (created draft ID: {draft.Id})");
-                    
-                    // Clean up the test draft
-                    try
-                    {
-                        await graphClient.Me.Messages[draft.Id].DeleteAsync();
-                        results.Add($"✅ Draft Cleanup: Successfully deleted test draft");
-                    }
-                    catch
-                    {
-                        results.Add($"⚠️ Draft Cleanup: Test draft {draft.Id} needs manual deletion");
-                    }
+                    var emailCards = _cardBuilder.BuildEmailCards(messages.Value, (msg, index) => CreateSearchEmailCard(msg, index, searchQuery, fromSender, subjectContains));
+                    var functionResponse = $"Found {emailCards.Count} emails matching your search for {userName}.";
+
+                    _cardBuilder.SetCardData(kernel, "emails", emailCards, emailCards.Count, functionResponse);
+                    return functionResponse;
                 }
             }
-            catch (Exception ex)
-            {
-                results.Add($"❌ Draft Creation Failed: {ex.Message}");
-            }
-
-            // Test 5: Check if we can determine send permissions
-            results.Add("\n📊 PERMISSION ANALYSIS:");
-            
-            if (results.Any(r => r.Contains("Mail Read Access") && r.Contains("✅")))
-            {
-                results.Add("✅ Mail.Read permission: GRANTED");
-            }
             else
             {
-                results.Add("❌ Mail.Read permission: DENIED or INSUFFICIENT");
+                return $"No emails found matching your search criteria for {userName}.";
             }
-
-            if (results.Any(r => r.Contains("Draft Creation") && r.Contains("✅")))
-            {
-                results.Add("✅ Mail.ReadWrite permission: LIKELY GRANTED");
-                results.Add("⚠️ Mail.Send permission: UNKNOWN (requires actual send test)");
-            }
-            else
-            {
-                results.Add("❌ Mail.ReadWrite permission: DENIED or INSUFFICIENT");
-                results.Add("❌ Mail.Send permission: LIKELY DENIED");
-            }
-
-            results.Add("\n📝 RECOMMENDATIONS:");
-            results.Add("• If email sending fails, check Azure AD app registration permissions");
-            results.Add("• Ensure Mail.Send delegated permission is granted and admin-consented");
-            results.Add("• Verify organization policies allow external email sending");
-            results.Add("• Check if multi-factor authentication or conditional access is blocking API calls");
-
-            return $"Email Permissions Check for {userName}:\n\n" + string.Join("\n", results);
         }
         catch (Exception ex)
         {
-            return $"Error checking email permissions: {ex.Message}";
+            _logger.LogError(ex, "Error searching emails");
+            return $"❌ Error searching emails: {ex.Message}";
         }
     }
 
-    private GraphServiceClient CreateGraphClient(string userAccessToken)
+    #region Private Helper Methods
+
+    private List<string> BuildEmailFilters(string timePeriod, string readStatus, string importance)
     {
-        var httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.Authorization = 
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", userAccessToken);
-        
-        return new GraphServiceClient(httpClient);
+        var filters = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(readStatus))
+        {
+            filters.Add(readStatus.ToLower() == "unread" ? "isRead eq false" : "isRead eq true");
+        }
+
+        if (!string.IsNullOrWhiteSpace(importance))
+        {
+            filters.Add($"importance eq '{importance.ToLower()}'");
+        }
+
+        if (!string.IsNullOrWhiteSpace(timePeriod))
+        {
+            var dateFilter = ParseTimePeriodFilter(timePeriod);
+            if (dateFilter != null)
+            {
+                filters.Add(dateFilter);
+            }
+        }
+
+        return filters;
     }
-} 
+
+    private List<string> BuildSearchFilters(string searchQuery, string fromSender, string subjectContains, string timePeriod, bool unreadOnly)
+    {
+        var filters = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(searchQuery))
+        {
+            filters.Add($"(contains(subject,'{searchQuery}') or contains(bodyPreview,'{searchQuery}'))");
+        }
+
+        if (!string.IsNullOrWhiteSpace(fromSender))
+        {
+            filters.Add($"(contains(from/emailAddress/name,'{fromSender}') or contains(from/emailAddress/address,'{fromSender}'))");
+        }
+
+        if (!string.IsNullOrWhiteSpace(subjectContains))
+        {
+            filters.Add($"contains(subject,'{subjectContains}')");
+        }
+
+        if (unreadOnly)
+        {
+            filters.Add("isRead eq false");
+        }
+
+        if (!string.IsNullOrWhiteSpace(timePeriod))
+        {
+            var dateFilter = ParseTimePeriodFilter(timePeriod);
+            if (dateFilter != null)
+            {
+                filters.Add(dateFilter);
+            }
+        }
+
+        return filters;
+    }
+
+    private object CreateEmailCard(Message msg, int index)
+    {
+        return new
+        {
+            id = $"email_{index}_{msg.Id?.GetHashCode():X}",
+            subject = _textProcessor.TruncateText(msg.Subject, SharedConstants.TextLimits.EmailSubjectMaxLength, SharedConstants.DefaultText.NoSubject),
+            from = _textProcessor.GetSafeDisplayName(msg.From?.EmailAddress?.Name, msg.From?.EmailAddress?.Address),
+            fromEmail = _textProcessor.GetValidEmailAddress(msg.From?.EmailAddress?.Address),
+            receivedDate = msg.ReceivedDateTime?.ToString(SharedConstants.DateFormats.StandardDateTime) ?? SharedConstants.DefaultText.Unknown,
+            receivedDateTime = msg.ReceivedDateTime?.ToString(SharedConstants.DateFormats.RoundTripDateTime),
+            isRead = msg.IsRead ?? false,
+            importance = msg.Importance?.ToString() ?? SharedConstants.DefaultText.Normal,
+            preview = _textProcessor.TruncateText(msg.BodyPreview, SharedConstants.TextLimits.EmailPreviewMaxLength),
+            webLink = msg.WebLink ?? SharedConstants.ServiceUrls.GetOutlookMailUrl(msg.Id ?? ""),
+            matchReason = (string)null, // Only used for search results
+            importanceColor = _textProcessor.GetPriorityColor(msg.Importance?.ToString()),
+            readStatusColor = _textProcessor.GetReadStatusColor(msg.IsRead ?? false)
+        };
+    }
+
+    private object CreateSearchEmailCard(Message msg, int index, string searchQuery, string fromSender, string subjectContains)
+    {
+        var baseCard = CreateEmailCard(msg, index);
+        var cardDict = new Dictionary<string, object>();
+        
+        // Copy all properties from base card
+        foreach (var property in baseCard.GetType().GetProperties())
+        {
+            cardDict[property.Name] = property.GetValue(baseCard);
+        }
+        
+        // Update specific properties for search results
+        cardDict["id"] = $"search_{index}_{msg.Id?.GetHashCode():X}";
+        cardDict["matchReason"] = DetermineMatchReason(msg, searchQuery, fromSender, subjectContains);
+        
+        return cardDict;
+    }
+
+    private string DetermineMatchReason(Message msg, string searchQuery, string fromSender, string subjectContains)
+    {
+        if (!string.IsNullOrWhiteSpace(fromSender)) return "Sender";
+        if (!string.IsNullOrWhiteSpace(subjectContains)) return "Subject";
+        if (!string.IsNullOrWhiteSpace(searchQuery)) return "Content/Subject";
+        return "Search";
+    }
+
+    private static bool IsSearchParametersEmpty(string searchQuery, string fromSender, string subjectContains)
+    {
+        return string.IsNullOrWhiteSpace(searchQuery) && 
+               string.IsNullOrWhiteSpace(fromSender) && 
+               string.IsNullOrWhiteSpace(subjectContains);
+    }
+
+    private static string ValidateEmailParameters(string toEmail, string subject, string body)
+    {
+        if (string.IsNullOrWhiteSpace(toEmail)) return "To email address is required.";
+        if (string.IsNullOrWhiteSpace(subject)) return "Email subject is required.";
+        if (string.IsNullOrWhiteSpace(body)) return "Email body is required.";
+        if (!toEmail.Contains("@")) return "Invalid email address format.";
+        return null;
+    }
+
+    private static Importance ParseImportance(string importance)
+    {
+        return importance?.ToLower() switch
+        {
+            "high" => Importance.High,
+            "low" => Importance.Low,
+            _ => Importance.Normal
+        };
+    }
+
+    private static string ParseTimePeriodFilter(string timePeriod)
+    {
+        var now = DateTime.UtcNow;
+        var today = now.Date;
+
+        return timePeriod?.ToLower() switch
+        {
+            "today" => $"receivedDateTime ge {today:yyyy-MM-ddTHH:mm:ssZ}",
+            "yesterday" => $"receivedDateTime ge {today.AddDays(-1):yyyy-MM-ddTHH:mm:ssZ} and receivedDateTime lt {today:yyyy-MM-ddTHH:mm:ssZ}",
+            "this_week" => $"receivedDateTime ge {today.AddDays(-(int)today.DayOfWeek):yyyy-MM-ddTHH:mm:ssZ}",
+            "last_week" => $"receivedDateTime ge {today.AddDays(-7 - (int)today.DayOfWeek):yyyy-MM-ddTHH:mm:ssZ} and receivedDateTime lt {today.AddDays(-(int)today.DayOfWeek):yyyy-MM-ddTHH:mm:ssZ}",
+            "this_month" => $"receivedDateTime ge {new DateTime(today.Year, today.Month, 1):yyyy-MM-ddTHH:mm:ssZ}",
+            "last_month" => $"receivedDateTime ge {new DateTime(today.Year, today.Month, 1).AddMonths(-1):yyyy-MM-ddTHH:mm:ssZ} and receivedDateTime lt {new DateTime(today.Year, today.Month, 1):yyyy-MM-ddTHH:mm:ssZ}",
+            _ when int.TryParse(timePeriod, out var days) && days > 0 => $"receivedDateTime ge {today.AddDays(-days):yyyy-MM-ddTHH:mm:ssZ}",
+            _ => null
+        };
+    }
+
+    #endregion
+}

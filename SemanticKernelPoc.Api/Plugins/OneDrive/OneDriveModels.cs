@@ -13,4 +13,4 @@ public record OneDriveOperationResult(
     string Status,
     string Note = null,
     string FolderName = null
-); 
+);

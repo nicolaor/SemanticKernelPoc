@@ -32,7 +32,7 @@ public class UserController : ControllerBase
             }
             else if (parts.Length == 1 && parts[0].Length >= 2)
             {
-                initials = parts[0].Substring(0, 2).ToUpper();
+                initials = parts[0][..2].ToUpper();
             }
         }
 
@@ -44,8 +44,8 @@ public class UserController : ControllerBase
             givenName,
             surname,
             initials,
-            displayName = !string.IsNullOrEmpty(givenName) && !string.IsNullOrEmpty(surname) 
-                ? $"{givenName} {surname}" 
+            displayName = !string.IsNullOrEmpty(givenName) && !string.IsNullOrEmpty(surname)
+                ? $"{givenName} {surname}"
                 : userName ?? "User"
         });
     }
@@ -53,15 +53,17 @@ public class UserController : ControllerBase
     [HttpGet("debug-claims")]
     public IActionResult GetDebugClaims()
     {
-        var claims = User.Claims.Select(c => new { 
-            Type = c.Type, 
-            Value = c.Value 
+        var claims = User.Claims.Select(c => new
+        {
+            c.Type,
+            c.Value
         }).ToList();
-        
-        return Ok(new { 
+
+        return Ok(new
+        {
             claims,
             claimCount = claims.Count,
             userId = User.Identity?.Name
         });
     }
-} 
+}

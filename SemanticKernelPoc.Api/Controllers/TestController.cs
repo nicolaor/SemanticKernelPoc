@@ -28,4 +28,4 @@ public class TestController : ControllerBase
             claims = User.Claims.Select(c => new { c.Type, c.Value })
         });
     }
-} 
+}

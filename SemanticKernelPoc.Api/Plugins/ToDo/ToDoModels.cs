@@ -26,4 +26,4 @@ public record TaskListInfo(
     bool IsOwner,
     bool IsShared,
     string WellknownListName
-); 
+);

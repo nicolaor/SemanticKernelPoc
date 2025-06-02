@@ -18,4 +18,4 @@ public record EmailSearchResult(
     bool IsRead,
     string Preview,
     string Importance = null
-); 
+);

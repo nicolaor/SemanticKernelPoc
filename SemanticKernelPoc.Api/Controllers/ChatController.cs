@@ -1,239 +1,233 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Identity.Web;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using SemanticKernelPoc.Api.Models;
 using SemanticKernelPoc.Api.Plugins.Calendar;
-using SemanticKernelPoc.Api.Plugins.SharePoint;
-using SemanticKernelPoc.Api.Plugins.OneDrive;
 using SemanticKernelPoc.Api.Plugins.Mail;
+using SemanticKernelPoc.Api.Plugins.OneDrive;
 using SemanticKernelPoc.Api.Plugins.ToDo;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
+using Microsoft.Identity.Web;
+using Microsoft.AspNetCore.Authentication;
+using System.Security.Claims;
+using Microsoft.Graph;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.ComponentModel;
+using System.Text;
+using ModelContextProtocol;
+using ModelContextProtocol.Client;
 
 namespace SemanticKernelPoc.Api.Controllers;
 
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
-public class ChatController : ControllerBase
+public class ChatController(
+    ILogger<ChatController> logger,
+    IConversationMemoryService conversationMemory) : ControllerBase
 {
-    private readonly ILogger<ChatController> _logger;
-    private readonly Kernel _kernel;
-    private readonly ITokenAcquisition _tokenAcquisition;
-    private readonly IConversationMemoryService _conversationMemory;
+    private readonly ILogger<ChatController> _logger = logger;
+    private readonly IConversationMemoryService _conversationMemory = conversationMemory;
 
-    public ChatController(
-        ILogger<ChatController> logger,
-        Kernel kernel,
-        ITokenAcquisition tokenAcquisition,
-        IConversationMemoryService conversationMemory)
-    {
-        _logger = logger;
-        _kernel = kernel;
-        _tokenAcquisition = tokenAcquisition;
-        _conversationMemory = conversationMemory;
-    }
-
-    [HttpPost("send")]
-    public async Task<ActionResult<ChatMessage>> SendMessage([FromBody] ChatMessage message)
+    [HttpPost]
+    public async Task<ActionResult<ChatResponse>> PostMessage([FromBody] ChatMessage chatMessage)
     {
         try
         {
-            var userId = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
-            var userName = User.FindFirst("name")?.Value ?? User.FindFirst("preferred_username")?.Value;
-            
-            // Ensure message has required properties
-            if (string.IsNullOrEmpty(message.Id))
-                message.Id = Guid.NewGuid().ToString();
-            if (message.Timestamp == default)
-                message.Timestamp = DateTime.UtcNow;
-            if (string.IsNullOrEmpty(message.UserId))
-                message.UserId = userId ?? "";
-            if (string.IsNullOrEmpty(message.UserName))
-                message.UserName = userName ?? "";
-            if (string.IsNullOrEmpty(message.SessionId))
-                message.SessionId = $"session_{userId}_{DateTime.UtcNow:yyyyMMdd}"; // Default session per user per day
-            
-            _logger.LogInformation("Received chat message from user {UserId} ({UserName}) in session {SessionId}: {Content}", 
-                userId, userName, message.SessionId, message.Content);
+            _logger.LogInformation("Received message: {Content}", chatMessage.Content);
 
-            // Save user message to conversation memory
-            await _conversationMemory.AddMessageAsync(message);
+            // Generate unique session ID for the user
+            var sessionId = $"session_{chatMessage.UserId}_{DateTime.UtcNow:yyyyMMdd}";
+            _logger.LogInformation("Generated SessionId {SessionId} for user {UserId}", sessionId, chatMessage.UserId);
 
-            // Get user's Microsoft Graph token for user-context operations
-            string userAccessToken = null;
-            try
+            // Add user message to conversation memory
+            chatMessage.SessionId = sessionId;
+            chatMessage.IsAiResponse = false;
+            chatMessage.Timestamp = DateTime.UtcNow;
+            await _conversationMemory.AddMessageAsync(chatMessage);
+
+            // Create kernel with user-specific plugins
+            var kernel = await CreateUserKernelAsync(chatMessage.UserId);
+
+            // Get conversation history for context
+            var conversationHistory = await _conversationMemory.GetConversationHistoryAsync(sessionId);
+
+            // Create enhanced system prompt that guides the AI to use functions naturally
+            var systemPrompt = CreateEnhancedSystemPrompt(chatMessage.UserName);
+            
+            // Build conversation context with history
+            var conversationContext = BuildConversationContext(conversationHistory.ToList(), systemPrompt, chatMessage.Content);
+
+            // Configure execution settings for natural function calling
+            var executionSettings = new OpenAIPromptExecutionSettings
             {
-                userAccessToken = await _tokenAcquisition.GetAccessTokenForUserAsync(
-                    scopes: new[] { "https://graph.microsoft.com/.default" },
-                    user: User);
-                _logger.LogInformation("Successfully acquired Microsoft Graph token for user {UserId}", userId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Could not acquire Microsoft Graph token for user {UserId}. Continuing without user context.", userId);
-            }
-
-            // Create a user-context kernel with the user's token
-            var userKernel = CreateUserContextKernel(userAccessToken, userId, userName);
-
-            // Get the chat completion service
-            var chatCompletionService = userKernel.GetRequiredService<IChatCompletionService>();
-            
-            // Load conversation history and create chat history
-            var conversationHistory = await _conversationMemory.GetConversationHistoryAsync(message.SessionId, maxMessages: 20);
-            var chatHistory = new ChatHistory();
-            
-            // Add system message
-            chatHistory.AddSystemMessage(
-                $"You are a helpful AI assistant for {userName ?? "the user"}. " +
-                "You have access to Microsoft Graph and can help with comprehensive productivity tasks across Microsoft 365. " +
-                "When the user asks for information or actions related to their Microsoft 365 data, you can access it using their authenticated context. " +
-                
-                "🚨 CRITICAL FUNCTION CALLING RULES:\n" +
-                "1. When user asks for 'today' or 'today's events' → call GetTodaysEvents()\n" +
-                "2. When user asks for 'next appointment', 'next event', 'my next appointment', 'when is my next appointment' → call GetNextAppointment()\n" +
-                "3. When user asks for 'this month' → call GetEventCount(timePeriod='this_month', includeDetails=true)\n" +
-                "4. When user asks for 'upcoming this month' or 'upcoming events this month' → call GetEventCount(timePeriod='this_month_upcoming', includeDetails=true)\n" +
-                "5. When user asks for 'this week' → call GetEventCount(timePeriod='this_week', includeDetails=true)\n" +
-                "6. When user asks for 'upcoming this week' or 'upcoming events this week' → call GetEventCount(timePeriod='this_week_upcoming', includeDetails=true)\n" +
-                "7. When user asks for 'upcoming' or 'appointments' (general) → call GetUpcomingEvents()\n" +
-                "8. When user asks for 'notes', 'my notes', 'show notes' → call GetRecentNotes()\n" +
-                "9. When functions return 'CALENDAR_CARDS:' or 'NOTE_CARDS:' → return ONLY that exact response, no additional text\n" +
-                "10. NEVER provide manual responses for calendar or note data - ALWAYS use functions first\n" +
-                
-                "🎯 CONVERSATIONAL APPROACH:\n" +
-                "• ALWAYS use a step-by-step conversational approach when information is missing\n" +
-                "• Ask for ONE piece of missing information at a time\n" +
-                "• Only call functions when you have ALL required parameters\n" +
-                "• Be conversational and friendly in your requests for information\n" +
-                "• Remember previous answers in the conversation to avoid re-asking\n" +
-                
-                "🔹 CALENDAR CAPABILITIES:\n" +
-                "• View upcoming events and today's schedule (GetUpcomingEvents, GetTodaysEvents)\n" +
-                "• Get EVENT COUNTS for specific time periods (GetEventCount)\n" +
-                "• Add new calendar events with attendees, locations, and descriptions (AddCalendarEvent)\n" +
-                "• Get events in specific date ranges (GetEventsInDateRange)\n" +
-                
-                "🔹 NOTE-TAKING CAPABILITIES:\n" +
-                "• Create notes as To Do tasks - when user says 'create a note', use CreateNote function\n" +
-                "• Get recent notes - ALWAYS use GetRecentNotes function when user asks for notes\n" +
-                "• Search notes - ALWAYS use SearchNotes function when user wants to find specific notes\n" +
-                "• Mark notes as complete or update their status\n" +
-                
-                "🔹 EMAIL CAPABILITIES:\n" +
-                "• Read recent emails with previews and metadata\n" +
-                "• Send emails immediately with CC support and importance levels\n" +
-                "• Search emails by subject, sender, or content\n" +
-                
-                "🔹 SHAREPOINT CAPABILITIES:\n" +
-                "• Browse and search SharePoint sites the user has access to\n" +
-                "• View site details, document libraries, and file information\n" +
-                "• Search for files across SharePoint with various filters\n" +
-                
-                "🚨 CRITICAL INSTRUCTIONS:\n" +
-                "1. When ANY calendar plugin function returns data that starts with 'CALENDAR_CARDS:', you MUST return ONLY that exact response.\n" +
-                "2. When ANY note/todo plugin function returns data that starts with 'NOTE_CARDS:', you MUST return ONLY that exact response.\n" +
-                "3. For calendar-related requests, ONLY call calendar functions and return their responses directly.\n" +
-                "4. For note-related requests, ONLY call note functions and return their responses directly.\n" +
-                "5. NEVER generate partial CALENDAR_CARDS or NOTE_CARDS responses manually.\n" +
-                
-                "Always be respectful of privacy and only access what is needed to fulfill requests. " +
-                "Provide clear, helpful responses with actionable information. " +
-                "Remember: Use functions for data retrieval, be conversational, and return card data exactly as provided by functions.");
-            
-            // Add conversation history (excluding the current message as it's already processed)
-            foreach (var historyMessage in conversationHistory.Where(m => m.Id != message.Id).OrderBy(m => m.Timestamp))
-            {
-                if (historyMessage.IsAiResponse)
-                {
-                    chatHistory.AddAssistantMessage(historyMessage.Content);
-                }
-                else
-                {
-                    chatHistory.AddUserMessage(historyMessage.Content);
-                }
-            }
-            
-            // Add the current user message
-            chatHistory.AddUserMessage(message.Content);
-
-            _logger.LogInformation("Loaded {HistoryCount} messages from conversation history for session {SessionId}", 
-                conversationHistory.Count(), message.SessionId);
-
-            // Enable automatic function calling with proper execution settings
-            var executionSettings = new OpenAIPromptExecutionSettings()
-            {
-                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
-                MaxTokens = 4000,
-                Temperature = 0.1
+                MaxTokens = 2000,
+                Temperature = 0.7,
+                TopP = 0.9,
+                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions
             };
 
-            // Get the AI response with automatic function calling enabled
-            var response = await chatCompletionService.GetChatMessageContentAsync(
-                chatHistory, 
-                executionSettings, 
-                userKernel);
+            // Let the AI naturally decide what functions to call and how to respond
+            var result = await kernel.InvokePromptAsync(conversationContext, new KernelArguments(executionSettings));
+            var aiResponse = result.GetValue<string>() ?? "I apologize, but I couldn't process your request.";
 
-            _logger.LogInformation("Raw AI response content: {Content}", response.Content);
-
-            // Use the response content as-is - the plugins already return properly formatted card data
-            string finalContent = response.Content ?? "I'm sorry, I couldn't generate a response.";
+            _logger.LogInformation("=== AI RESPONSE ANALYSIS START ===");
+            _logger.LogInformation("AI Response Length: {Length} characters", aiResponse.Length);
+            _logger.LogInformation("AI Response Content: {Response}", aiResponse);
             
-            // Log if we detect card data (for debugging)
-            if (finalContent.Contains("CALENDAR_CARDS:") || finalContent.Contains("NOTE_CARDS:"))
+            // Check for structured data in kernel instead of parsing the AI response
+            ChatResponse processedResponse;
+            if (kernel.Data.TryGetValue("HasStructuredData", out var hasStructured) && hasStructured?.ToString() == "true")
             {
-                _logger.LogInformation("Response contains card data, passing through as-is");
+                _logger.LogInformation("✅ Processing response with structured data from kernel");
+                
+                var structuredType = kernel.Data.TryGetValue("StructuredDataType", out var type) ? type?.ToString() : "tasks";
+                var structuredCount = kernel.Data.TryGetValue("StructuredDataCount", out var count) ? count : 0;
+                
+                // Get the appropriate structured data based on type
+                object structuredData = null;
+                string functionResponse = null;
+                
+                switch (structuredType)
+                {
+                    case "tasks":
+                        structuredData = kernel.Data.TryGetValue("TasksCards", out var taskData) ? taskData : null;
+                        functionResponse = kernel.Data.TryGetValue("TasksFunctionResponse", out var taskResponse) ? taskResponse?.ToString() : null;
+                        break;
+                    case "emails":
+                        structuredData = kernel.Data.TryGetValue("EmailsCards", out var emailData) ? emailData : null;
+                        functionResponse = kernel.Data.TryGetValue("EmailsFunctionResponse", out var emailResponse) ? emailResponse?.ToString() : null;
+                        break;
+                    case "calendar":
+                        structuredData = kernel.Data.TryGetValue("CalendarCards", out var calendarData) ? calendarData : null;
+                        functionResponse = kernel.Data.TryGetValue("CalendarFunctionResponse", out var calendarResponse) ? calendarResponse?.ToString() : null;
+                        break;
+                    case "sharepoint":
+                        structuredData = kernel.Data.TryGetValue("SharePointCards", out var sharePointData) ? sharePointData : null;
+                        functionResponse = kernel.Data.TryGetValue("SharePointFunctionResponse", out var sharePointResponse) ? sharePointResponse?.ToString() : null;
+                        break;
+                    default:
+                        structuredData = kernel.Data.TryGetValue("TasksCards", out var defaultData) ? defaultData : null;
+                        functionResponse = kernel.Data.TryGetValue("TasksFunctionResponse", out var defaultResponse) ? defaultResponse?.ToString() : null;
+                        break;
+                }
+                
+                // Use function response if available, otherwise use a clean minimal response
+                var cleanResponse = functionResponse ?? $"I found {structuredCount} {structuredType}. The details are displayed in the cards below.";
+                
+                processedResponse = new ChatResponse
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    SessionId = sessionId,
+                    Content = cleanResponse, // Use function response instead of AI generated content
+                    UserId = "ai-assistant",
+                    UserName = "AI Assistant",
+                    IsAiResponse = true,
+                    Timestamp = DateTime.UtcNow,
+                    Cards = new CardData
+                    {
+                        Type = structuredType,
+                        Data = structuredData,
+                        Count = Convert.ToInt32(structuredCount),
+                        UserName = chatMessage.UserName,
+                        TimeRange = "Recent"
+                    },
+                    Metadata = new ResponseMetadata
+                    {
+                        HasCards = true
+                    }
+                };
+                
+                _logger.LogInformation("📊 Created structured response - Type: {Type}, Count: {Count}", structuredType, structuredCount);
+                _logger.LogInformation("📝 Using function response: {FunctionResponse}", cleanResponse);
             }
-
-            // Create AI response message
-            var aiResponse = new ChatMessage
+            else
             {
-                Id = Guid.NewGuid().ToString(),
-                Content = finalContent,
+                _logger.LogInformation("📝 Processing as regular text response (no structured data)");
+                
+                // Create regular text response
+                processedResponse = new ChatResponse
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    SessionId = sessionId,
+                    Content = aiResponse,
+                    UserId = "ai-assistant",
+                    UserName = "AI Assistant",
+                    IsAiResponse = true,
+                    Timestamp = DateTime.UtcNow,
+                    Metadata = new ResponseMetadata
+                    {
+                        HasCards = false
+                    }
+                };
+            }
+            
+            _logger.LogInformation("=== AI RESPONSE ANALYSIS END ===");
+                 
+            _logger.LogInformation("=== PROCESSED RESPONSE ANALYSIS START ===");
+            _logger.LogInformation("Processed Content Length: {Length} characters", processedResponse.Content?.Length ?? 0);
+            _logger.LogInformation("Processed Content: {Content}", processedResponse.Content);
+            _logger.LogInformation("Has Cards: {HasCards}", processedResponse.Cards != null);
+            if (processedResponse.Cards != null)
+            {
+                _logger.LogInformation("Card Type: {Type}, Count: {Count}", processedResponse.Cards.Type, processedResponse.Cards.Count);
+                
+                // DEBUG: Log the actual cards data being sent
+                try
+                {
+                    var cardsJson = System.Text.Json.JsonSerializer.Serialize(processedResponse.Cards.Data);
+                    _logger.LogInformation("🔍 DEBUG - Cards Data JSON being sent: {CardsJson}", cardsJson);
+                    _logger.LogInformation("🔍 DEBUG - Cards Data Type: {DataType}", processedResponse.Cards.Data?.GetType().Name ?? "null");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ Failed to serialize cards data for debugging");
+                }
+            }
+            _logger.LogInformation("=== PROCESSED RESPONSE ANALYSIS END ===");
+
+            // Add AI response to conversation memory
+            var aiMessage = new ChatMessage
+            {
+                Id = processedResponse.Id,
+                SessionId = sessionId,
+                Content = processedResponse.Content,
                 UserId = "ai-assistant",
-                UserName = "AI Assistant", 
-                Timestamp = DateTime.UtcNow,
+                UserName = "AI Assistant",
                 IsAiResponse = true,
-                SessionId = message.SessionId
+                Timestamp = DateTime.UtcNow,
+                Cards = processedResponse.Cards,
+                Metadata = processedResponse.Metadata
             };
+            await _conversationMemory.AddMessageAsync(aiMessage);
 
-            // Save AI response to conversation memory
-            await _conversationMemory.AddMessageAsync(aiResponse);
-
-            _logger.LogInformation("Generated and saved AI response for user {UserId} in session {SessionId}", userId, message.SessionId);
-
-            return Ok(aiResponse);
+            return Ok(processedResponse);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing chat message from user {UserId}", message.UserId);
-            
-            return StatusCode(500, new ChatMessage
+            _logger.LogError(ex, "Error processing chat message");
+            return StatusCode(500, new ChatResponse
             {
-                Id = Guid.NewGuid().ToString(),
-                Content = "I'm experiencing technical difficulties. Please try again later.",
-                UserId = "ai-assistant",
-                UserName = "AI Assistant",
-                Timestamp = DateTime.UtcNow,
+                Content = "I apologize, but I encountered an error while processing your request. Please try again.",
                 IsAiResponse = true,
-                SessionId = message.SessionId
+                Timestamp = DateTime.UtcNow
             });
         }
     }
 
-    private Kernel CreateUserContextKernel(string userAccessToken, string userId, string userName)
+    private async Task<Kernel> CreateUserKernelAsync(string userId)
     {
         var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>()
             .GetSection("SemanticKernel").Get<SemanticKernelConfig>()
             ?? throw new InvalidOperationException("SemanticKernel configuration is missing");
 
         var kernelBuilder = Kernel.CreateBuilder();
-        
-        // Add the AI service (same as global kernel)
+
+        // Configure AI service using the correct config structure
         if (config.UseAzureOpenAI)
         {
             kernelBuilder.AddAzureOpenAIChatCompletion(
@@ -248,38 +242,54 @@ public class ChatController : ControllerBase
                 apiKey: config.ApiKey);
         }
 
-        // Add Microsoft Graph plugins that will use the user's token
-        if (!string.IsNullOrEmpty(userAccessToken))
-        {
-            // Create plugin instances with dependency injection
-            var graphService = HttpContext.RequestServices.GetRequiredService<IGraphService>();
-            var logger = HttpContext.RequestServices.GetRequiredService<ILogger<CalendarPlugin>>();
-            
-            var calendarPlugin = new CalendarPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<CalendarPlugin>>());
-            var todoPlugin = new ToDoPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<ToDoPlugin>>());
-            
-            kernelBuilder.Plugins.AddFromObject(new SharePointPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<SharePointPlugin>>()));
-            kernelBuilder.Plugins.AddFromObject(new OneDrivePlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<OneDrivePlugin>>()));
-            kernelBuilder.Plugins.AddFromObject(calendarPlugin);
-            kernelBuilder.Plugins.AddFromObject(new MailPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<MailPlugin>>()));
-            kernelBuilder.Plugins.AddFromObject(todoPlugin);
-            _logger.LogInformation("Added SharePoint, OneDrive, Calendar, Mail, and ToDo plugins for user {UserId}", userId);
-        }
-
         var kernel = kernelBuilder.Build();
 
-        // Store user context in kernel for plugins to use
-        if (!string.IsNullOrEmpty(userAccessToken))
+        // Register plugins
+        var graphService = HttpContext.RequestServices.GetRequiredService<IGraphService>();
+        var serviceProvider = HttpContext.RequestServices;
+        
+        // Get user access token and add to kernel data for plugins
+        var accessToken = await HttpContext.GetTokenAsync("access_token");
+        var userName = User.FindFirst("name")?.Value ?? User.FindFirst("preferred_username")?.Value ?? "User";
+        var userOid = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value ?? "Unknown";
+        
+        // Add user context to kernel data for plugins to access
+        kernel.Data["UserAccessToken"] = accessToken;
+        kernel.Data["UserName"] = userName;
+        kernel.Data["UserId"] = userOid;
+        
+        _logger.LogInformation("🔑 TOKEN DEBUG: Adding user context to kernel data");
+        _logger.LogInformation("   👤 User Name: {UserName}", userName);
+        _logger.LogInformation("   🆔 User OID: {UserOid}", userOid);
+        _logger.LogInformation("   🎫 Access Token Length: {TokenLength} chars", accessToken?.Length ?? 0);
+        _logger.LogInformation("   📋 Kernel Data Keys: {Keys}", string.Join(", ", kernel.Data.Keys));
+        
+        // Add standard plugins directly
+        kernel.Plugins.AddFromType<OneDrivePlugin>("OneDrivePlugin", serviceProvider);
+        kernel.Plugins.AddFromType<CalendarPlugin>("CalendarPlugin", serviceProvider);
+        kernel.Plugins.AddFromType<MailPlugin>("MailPlugin", serviceProvider);
+        kernel.Plugins.AddFromType<ToDoPlugin>("ToDoPlugin", serviceProvider);
+
+        // Add SharePoint MCP Plugin with proper token context
+        if (!string.IsNullOrEmpty(accessToken))
         {
-            kernel.Data["UserAccessToken"] = userAccessToken;
-            kernel.Data["UserId"] = userId ?? string.Empty;
-            kernel.Data["UserName"] = userName ?? string.Empty;
+            // The user token is already added to kernel.Data above, which the SharePoint plugin will access
+            // Register SharePoint MCP Plugin
+            kernel.Plugins.AddFromType<SemanticKernelPoc.Api.Plugins.SharePoint.SharePointMcpPlugin>("SharePointMcpPlugin", serviceProvider);
             
-            // Log available functions for debugging
-            var functions = kernel.Plugins.GetFunctionsMetadata();
-            _logger.LogInformation("Available functions for user {UserId}: {Functions}", 
-                userId, string.Join(", ", functions.Select(f => $"{f.PluginName}.{f.Name}")));
+            _logger.LogInformation("Added OneDrive, Calendar, Mail, ToDo, and SharePoint MCP plugins for user {UserId}.", userOid);
         }
+        else
+        {
+            _logger.LogWarning("⚠️ No access token available for SharePoint MCP plugin");
+            
+            // Add other plugins without SharePoint
+            _logger.LogInformation("Added OneDrive, Calendar, Mail, and ToDo plugins for user {UserId} (SharePoint unavailable due to missing token).", userOid);
+        }
+
+        // Log available functions for debugging
+        var availableFunctions = kernel.Plugins.SelectMany(p => p.Select(f => $"{p.Name}.{f.Name}")).ToList();
+        _logger.LogInformation("Available functions for user {UserId}: {Functions}", userOid, string.Join(", ", availableFunctions));
 
         return kernel;
     }
@@ -312,7 +322,7 @@ public class ChatController : ControllerBase
         {
             var userId = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
             var history = await _conversationMemory.GetConversationHistoryAsync(sessionId, maxMessages);
-            
+
             // Verify the session belongs to the user (basic security check)
             if (history.Any() && history.Any(m => !string.IsNullOrEmpty(m.UserId) && m.UserId != userId && m.UserId != "ai-assistant"))
             {
@@ -334,7 +344,7 @@ public class ChatController : ControllerBase
         try
         {
             var userId = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
-            
+
             // Verify the session belongs to the user before clearing
             var history = await _conversationMemory.GetConversationHistoryAsync(sessionId, 1);
             if (history.Any() && history.Any(m => !string.IsNullOrEmpty(m.UserId) && m.UserId != userId && m.UserId != "ai-assistant"))
@@ -344,7 +354,7 @@ public class ChatController : ControllerBase
 
             await _conversationMemory.ClearConversationAsync(sessionId);
             _logger.LogInformation("Cleared conversation for session {SessionId} by user {UserId}", sessionId, userId);
-            
+
             return Ok();
         }
         catch (Exception ex)
@@ -353,4 +363,86 @@ public class ChatController : ControllerBase
             return StatusCode(500, "Error clearing conversation");
         }
     }
-} 
+
+    private string CreateEnhancedSystemPrompt(string userName)
+    {
+        return $@"You are an intelligent assistant helping {userName} with their Microsoft 365 tasks and data.
+
+CRITICAL: YOU MUST CALL FUNCTIONS - DO NOT GIVE GENERIC RESPONSES!
+
+MANDATORY FUNCTION CALLING RULES:
+
+1. SHAREPOINT SITES - When user asks for SharePoint sites, you MUST call one of these functions:
+   - SearchSharePointSites - for general ""SharePoint sites"" requests
+   - SearchRecentSharePointSites - for ""recent"", ""last N"", ""latest"" requests  
+   - FindSharePointSitesByKeyword - for specific search terms
+   - SearchSharePointSitesAdvanced - for complex queries
+   
+   Example: User says ""show me my last 3 sharepoint sites"" → CALL SearchRecentSharePointSites with count=3
+
+2. TASK/TODO QUERIES - ALWAYS use ToDoPlugin functions for:
+   - ""my tasks"", ""show tasks"", ""get tasks"", ""task list"", ""to-do"", ""todos""
+   - ""what tasks do I have"", ""recent tasks"", ""task summary""
+   - Task-related searches, creation, and management
+   
+   IMPORTANT: Use analysisMode=true for:
+   - ""which task should I tackle first"", ""what should I focus on"", ""prioritize my tasks""
+   - ""summarize my tasks"", ""what are my tasks about"", ""task summary""
+   - ""recommend"", ""suggest"", ""advice"", ""help me decide"", ""most important""
+   - Any request asking for analysis, advice, recommendations, or prioritization
+   
+   Use analysisMode=false ONLY for simple listing/display requests like ""show my tasks""
+
+3. EMAIL QUERIES - ALWAYS use MailPlugin functions for:
+   - ""emails"", ""messages"", ""inbox"", ""mail""
+   - ""recent emails"", ""check email"", ""email from [sender]""
+
+4. CALENDAR QUERIES - ALWAYS use CalendarPlugin functions for:
+   - ""meetings"", ""appointments"", ""calendar"", ""events""
+   - ""today's meetings"", ""upcoming events"", ""schedule""
+
+5. ONEDRIVE QUERIES - ALWAYS use OneDrivePlugin functions for:
+   - ""files"", ""documents"", ""OneDrive""
+   - ""recent files"", ""my documents""
+
+NEVER say ""I cannot access"" or ""I don't have the ability"" - these functions ARE available.
+ALWAYS attempt to call the appropriate function first.
+If a function call fails, THEN explain the error from the function result.
+
+When users ask for data, you MUST call the relevant functions to retrieve actual data.
+Do not make assumptions or provide generic responses without calling functions.
+
+Your role is to be a helpful Microsoft 365 assistant that actually retrieves and works with user data through the available functions.
+
+Always be helpful, accurate, and call the appropriate functions to fulfill user requests.";
+    }
+
+    private string BuildConversationContext(List<ChatMessage> history, string systemPrompt, string currentMessage)
+    {
+        var context = new StringBuilder();
+        context.AppendLine(systemPrompt);
+        context.AppendLine();
+        
+        // Add recent conversation history for context
+        if (history.Any())
+        {
+            context.AppendLine("Previous conversation:");
+            foreach (var msg in history.TakeLast(5))
+            {
+                var role = msg.IsAiResponse ? "Assistant" : "User";
+                context.AppendLine($"{role}: {msg.Content}");
+            }
+            context.AppendLine();
+        }
+        
+        context.AppendLine($"User: {currentMessage}");
+        context.AppendLine("Assistant:");
+        
+        return context.ToString();
+    }
+
+    private string GenerateSessionId(string userId)
+    {
+        return $"session_{userId}_{DateTime.UtcNow:yyyyMMdd}";
+    }
+}

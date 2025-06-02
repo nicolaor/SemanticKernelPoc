@@ -4,6 +4,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SemanticKernelPoc.Api", "SemanticKernelPoc.Api\SemanticKernelPoc.Api.csproj", "{520C1C3A-5D4A-4B08-AF6F-959CB619A16F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SemanticKernelPoc.McpServer", "SemanticKernelPoc.McpServer\SemanticKernelPoc.McpServer.csproj", "{B8E7C2D1-8F4A-4C9B-9E5F-1A2B3C4D5E6F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -17,5 +19,9 @@ Global
 		{520C1C3A-5D4A-4B08-AF6F-959CB619A16F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{520C1C3A-5D4A-4B08-AF6F-959CB619A16F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{520C1C3A-5D4A-4B08-AF6F-959CB619A16F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B8E7C2D1-8F4A-4C9B-9E5F-1A2B3C4D5E6F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B8E7C2D1-8F4A-4C9B-9E5F-1A2B3C4D5E6F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B8E7C2D1-8F4A-4C9B-9E5F-1A2B3C4D5E6F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B8E7C2D1-8F4A-4C9B-9E5F-1A2B3C4D5E6F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
