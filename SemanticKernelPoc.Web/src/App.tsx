@@ -5,6 +5,7 @@ import type { ChatMessage } from "./types/chat";
 import { useUserProfile } from "./hooks/useUserProfile";
 import { apiService, ApiConnectionError } from "./services/apiService";
 import MessageRenderer from "./components/MessageRenderer";
+import ThemeToggle from "./components/ThemeToggle";
 
 function App() {
   const { instance } = useMsal();
@@ -273,6 +274,7 @@ function App() {
                     </span>
                   </div>
                 ) : null}
+                <ThemeToggle />
                 <button
                   onClick={handleLogout}
                   className="px-5 py-2 text-sm font-semibold rounded-lg text-white transition-all duration-200"
@@ -287,6 +289,7 @@ function App() {
                 </button>
               </AuthenticatedTemplate>
               <UnauthenticatedTemplate>
+                <ThemeToggle />
                 <button onClick={handleLogin} className="px-6 py-2 text-sm font-semibold rounded-lg text-white shadow-lg hover:shadow-xl transition-all duration-200" style={{ background: "var(--accent-primary)" }} onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-secondary)")} onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent-primary)")}>
                   Sign In
                 </button>

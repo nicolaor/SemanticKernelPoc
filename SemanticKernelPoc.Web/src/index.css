@@ -19,8 +19,45 @@
   --input-bg: #ffffff;
 }
 
+/* Manual dark theme override - takes precedence over media query */
+:root.dark-theme {
+  /* Dark mode colors - OpenAI inspired black theme */
+  --bg-primary: #0d0d0d;
+  --bg-secondary: #171717;
+  --bg-tertiary: #262626;
+  --text-primary: #ffffff;
+  --text-secondary: #d4d4d8;
+  --text-tertiary: #a1a1aa;
+  --border-primary: #262626;
+  --border-secondary: #404040;
+  --accent-primary: #10a37f;
+  --accent-secondary: #0d8f6f;
+  --nav-bg: #171717;
+  --card-bg: #1a1a1a;
+  --input-bg: #262626;
+}
+
+/* Manual light theme override - ensures light theme even if system prefers dark */
+:root.light-theme {
+  /* Light mode colors */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-tertiary: #64748b;
+  --border-primary: #e2e8f0;
+  --border-secondary: #cbd5e1;
+  --accent-primary: #3b82f6;
+  --accent-secondary: #1e40af;
+  --nav-bg: #ffffff;
+  --card-bg: #f8fafc;
+  --input-bg: #ffffff;
+}
+
+/* System preference - only applies when no manual theme class is set */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.light-theme):not(.dark-theme) {
     /* Dark mode colors - OpenAI inspired black theme */
     --bg-primary: #0d0d0d;
     --bg-secondary: #171717;
