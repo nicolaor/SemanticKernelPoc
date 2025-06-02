@@ -10,7 +10,6 @@ using SemanticKernelPoc.Api.Plugins.OneDrive;
 using SemanticKernelPoc.Api.Plugins.ToDo;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
-using SemanticKernelPoc.Api.Services;
 using Microsoft.Identity.Web;
 using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
@@ -29,12 +28,10 @@ namespace SemanticKernelPoc.Api.Controllers;
 [Route("api/[controller]")]
 public class ChatController(
     ILogger<ChatController> logger,
-    IConversationMemoryService conversationMemory,
-    IResponseProcessingService responseProcessingService) : ControllerBase
+    IConversationMemoryService conversationMemory) : ControllerBase
 {
     private readonly ILogger<ChatController> _logger = logger;
     private readonly IConversationMemoryService _conversationMemory = conversationMemory;
-    private readonly IResponseProcessingService _responseProcessingService = responseProcessingService;
 
     [HttpPost]
     public async Task<ActionResult<ChatResponse>> PostMessage([FromBody] ChatMessage chatMessage)
@@ -152,12 +149,21 @@ public class ChatController(
             {
                 _logger.LogInformation("📝 Processing as regular text response (no structured data)");
                 
-                // Process the response using the old method for backward compatibility (in case some functions still use prefixes)
-                processedResponse = _responseProcessingService.ProcessResponse(
-                    aiResponse, 
-                    sessionId, 
-                    "ai-assistant", 
-                    "AI Assistant");
+                // Create regular text response
+                processedResponse = new ChatResponse
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    SessionId = sessionId,
+                    Content = aiResponse,
+                    UserId = "ai-assistant",
+                    UserName = "AI Assistant",
+                    IsAiResponse = true,
+                    Timestamp = DateTime.UtcNow,
+                    Metadata = new ResponseMetadata
+                    {
+                        HasCards = false
+                    }
+                };
             }
             
             _logger.LogInformation("=== AI RESPONSE ANALYSIS END ===");
