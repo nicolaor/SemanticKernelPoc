@@ -46,10 +46,8 @@ azure.json
 apikeys.txt
 tokens.txt
 
-# Exception: Include development HTTPS certificates
-!certs/localhost.key
-!certs/localhost.crt
-!certs/localhost.pfx
+# HTTPS certificates for development (generated locally)
+certs/
 
 # IDE and editor files
 .vscode/
