@@ -9,8 +9,33 @@ interface SharePointSite {
 }
 
 interface SharePointCardProps {
-  sites: SharePointSite[];
+  sites?: SharePointSite[];
 }
+
+// Helper function to safely extract hostname from URL
+const getSafeHostname = (url: string): string => {
+  if (!url) return 'Unknown domain';
+  
+  try {
+    return new URL(url).hostname;
+  } catch {
+    // If URL is invalid, try to extract domain from string
+    const match = url.match(/^https?:\/\/([^\/]+)/);
+    return match ? match[1] : 'Invalid URL';
+  }
+};
+
+// Helper function to check if URL is valid
+const isValidUrl = (url: string): boolean => {
+  if (!url) return false;
+  
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 // Helper functions
 const getWebTemplateIcon = (webTemplate: string) => {
@@ -125,24 +150,40 @@ const SiteItem: React.FC<{ site: SharePointSite; index: number }> = React.memo((
 
           {/* Open in SharePoint button */}
           <div className="flex-shrink-0 ml-3">
-            <a
-              href={site.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors duration-200"
-              style={{
-                background: "var(--accent-primary)",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-secondary)")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent-primary)")}
-              title="Open in SharePoint"
-            >
-              <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
-                <path d="M5 5a2 2 0 00-2 2v6a2 2 0 002 2h6a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
-              </svg>
-              Open
-            </a>
+            {isValidUrl(site.url) ? (
+              <a
+                href={site.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors duration-200"
+                style={{
+                  background: "var(--accent-primary)",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-secondary)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent-primary)")}
+                title="Open in SharePoint"
+              >
+                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                  <path d="M5 5a2 2 0 00-2 2v6a2 2 0 002 2h6a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                </svg>
+                Open
+              </a>
+            ) : (
+              <span
+                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium opacity-50 cursor-not-allowed"
+                style={{
+                  background: "var(--bg-tertiary)",
+                  color: "var(--text-tertiary)",
+                }}
+                title="Invalid URL - Cannot open in SharePoint"
+              >
+                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clipRule="evenodd" />
+                </svg>
+                Invalid
+              </span>
+            )}
           </div>
         </div>
 
@@ -163,7 +204,7 @@ const SiteItem: React.FC<{ site: SharePointSite; index: number }> = React.memo((
               <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M4.083 9h1.946c.089-1.546.383-2.97.837-4.118A6.004 6.004 0 004.083 9zM10 2a8 8 0 100 16 8 8 0 000-16zm0 2c-.076 0-.232.032-.465.262-.238.234-.497.623-.737 1.182-.389.907-.673 2.142-.766 3.556h3.936c-.093-1.414-.377-2.649-.766-3.556-.24-.559-.5-.948-.737-1.182C10.232 4.032 10.076 4 10 4zm3.971 5c-.089-1.546-.383-2.97-.837-4.118A6.004 6.004 0 0115.917 9h-1.946zm-2.003 2H8.032c.093 1.414.377 2.649.766 3.556.24.559.5.948.737 1.182.233.23.389.262.465.262.076 0 .232-.032.465-.262.238-.234.498-.623.737-1.182.389-.907.673-2.142.766-3.556zm1.166 4.118c.454-1.147.748-2.572.837-4.118h1.946a6.004 6.004 0 01-2.783 4.118zm-6.268 0C6.412 13.97 6.118 12.546 6.03 11H4.083a6.004 6.004 0 002.783 4.118z" clipRule="evenodd" />
               </svg>
-              <span className="truncate max-w-xs">{new URL(site.url).hostname}</span>
+              <span className="truncate max-w-xs">{getSafeHostname(site.url)}</span>
             </div>
           </div>
         </div>
@@ -173,6 +214,9 @@ const SiteItem: React.FC<{ site: SharePointSite; index: number }> = React.memo((
 });
 
 const SharePointCard: React.FC<SharePointCardProps> = ({ sites }) => {
+  // Add null safety for sites
+  const safeSites = sites || [];
+  
   return (
     <div className="w-full max-w-2xl mx-auto">
       {/* Header */}
@@ -182,7 +226,7 @@ const SharePointCard: React.FC<SharePointCardProps> = ({ sites }) => {
           background: "var(--bg-secondary)",
           border: "1px solid var(--border-primary)",
         }}
-        title={`SharePoint sites overview showing ${sites.length} ${sites.length === 1 ? "site" : "sites"}`}
+        title={`SharePoint sites overview showing ${safeSites.length} ${safeSites.length === 1 ? "site" : "sites"}`}
       >
         <div className="flex items-center space-x-2">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center shadow-sm" style={{ background: "var(--accent-primary)" }} title="SharePoint sites icon">
@@ -191,8 +235,8 @@ const SharePointCard: React.FC<SharePointCardProps> = ({ sites }) => {
             </svg>
           </div>
           <div>
-            <h3 className="text-lg font-bold" style={{ color: "var(--text-primary)", fontWeight: "700" }} title={`${sites.length} SharePoint ${sites.length === 1 ? "site" : "sites"} found`}>
-              {sites.length === 1 ? "SharePoint Site" : `${sites.length} SharePoint Sites`}
+            <h3 className="text-lg font-bold" style={{ color: "var(--text-primary)", fontWeight: "700" }} title={`${safeSites.length} SharePoint ${safeSites.length === 1 ? "site" : "sites"} found`}>
+              {safeSites.length === 1 ? "SharePoint Site" : `${safeSites.length} SharePoint Sites`}
             </h3>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }} title="Your SharePoint sites and Teams channels">
               Your sites and channels
@@ -203,8 +247,8 @@ const SharePointCard: React.FC<SharePointCardProps> = ({ sites }) => {
 
       {/* Sites */}
       <div className="space-y-2">
-        {sites.length > 0 ? (
-          sites.map((site, index) => <SiteItem key={site.url || index} site={site} index={index} />)
+        {safeSites.length > 0 ? (
+          safeSites.map((site, index) => <SiteItem key={site.url || index} site={site} index={index} />)
         ) : (
           /* No sites */
           <div

@@ -56,82 +56,6 @@ public class ChatController(
             // Create kernel with user-specific plugins
             var kernel = await CreateUserKernelAsync(chatMessage.UserId);
 
-            // Add MCP function call logging to track when SharePoint functions are called
-            kernel.FunctionInvoking += (sender, e) =>
-            {
-                var functionFullName = $"{e.Function.PluginName}.{e.Function.Name}";
-                
-                if (e.Function.PluginName.StartsWith("SharePointMCP"))
-                {
-                    _logger.LogWarning("🚨 CRITICAL: SharePoint MCP function called - {FunctionName}", functionFullName);
-                    _logger.LogWarning("   📨 Original user message: {UserMessage}", chatMessage.Content);
-                    _logger.LogWarning("   🤔 This should NOT happen for task-related requests!");
-                    
-                    // Log parameters for debugging
-                    foreach (var param in e.Arguments)
-                    {
-                        _logger.LogWarning("   📋 Parameter {Key}: {Value}", param.Key, param.Value);
-                    }
-                }
-                else if (e.Function.PluginName == "ToDoPlugin")
-                {
-                    _logger.LogInformation("✅ CORRECT: ToDo function called for user request - {FunctionName}", functionFullName);
-                    _logger.LogInformation("   📨 User message: {UserMessage}", chatMessage.Content);
-                }
-                else
-                {
-                    _logger.LogInformation("🔧 Function Call: {FunctionName}", functionFullName);
-                    _logger.LogInformation("   📨 User message: {UserMessage}", chatMessage.Content);
-                }
-            };
-
-            kernel.FunctionInvoked += (sender, e) =>
-            {
-                var resultPreview = e.Result?.GetValue<object>()?.ToString();
-                var truncatedResult = resultPreview?.Length > 200 ? resultPreview.Substring(0, 200) + "..." : resultPreview;
-                
-                if (e.Function.PluginName.StartsWith("SharePointMCP"))
-                {
-                    _logger.LogInformation("📡 MCP Function Result: {PluginName}.{FunctionName} completed", 
-                        e.Function.PluginName, e.Function.Name);
-                    
-                    if (!string.IsNullOrEmpty(resultPreview))
-                    {
-                        _logger.LogInformation("   📤 Result preview: {ResultPreview}", truncatedResult);
-                    }
-                    
-                    // Check for authentication errors in the result
-                    if (resultPreview?.Contains("MsalUiRequiredException") == true || 
-                        resultPreview?.Contains("additional permissions") == true ||
-                        resultPreview?.Contains("requires additional consent") == true)
-                    {
-                        _logger.LogWarning("⚠️ SharePoint MCP function returned authentication error: {FunctionName}", e.Function.Name);
-                        _logger.LogWarning("   🔑 Error details: {ErrorDetails}", truncatedResult);
-                    }
-                }
-                else
-                {
-                    _logger.LogInformation("✅ Function Result: {PluginName}.{FunctionName} completed", 
-                        e.Function.PluginName, e.Function.Name);
-                }
-                
-                // Check for structured data stored in kernel data after function execution
-                if (kernel.Data.ContainsKey("TaskCards"))
-                {
-                    _logger.LogInformation("📊 Structured task data found in kernel data");
-                    var taskCards = kernel.Data["TaskCards"];
-                    var cardType = kernel.Data.TryGetValue("TaskCardType", out var type) ? type?.ToString() : "tasks";
-                    var cardCount = kernel.Data.TryGetValue("TaskCardCount", out var count) ? count : 0;
-                    
-                    _logger.LogInformation("   🎯 Card Type: {CardType}, Count: {Count}", cardType, cardCount);
-                    
-                    // Store structured data for response processing
-                    kernel.Data["HasStructuredData"] = true;
-                    kernel.Data["StructuredDataType"] = cardType;
-                    kernel.Data["StructuredDataCount"] = cardCount;
-                }
-            };
-
             // Get conversation history for context
             var conversationHistory = await _conversationMemory.GetConversationHistoryAsync(sessionId);
 
@@ -169,27 +93,40 @@ public class ChatController(
                 
                 // Get the appropriate structured data based on type
                 object structuredData = null;
+                string functionResponse = null;
+                
                 switch (structuredType)
                 {
                     case "tasks":
                         structuredData = kernel.Data.TryGetValue("TaskCards", out var taskData) ? taskData : null;
+                        functionResponse = kernel.Data.TryGetValue("TaskFunctionResponse", out var taskResponse) ? taskResponse?.ToString() : null;
                         break;
                     case "emails":
                         structuredData = kernel.Data.TryGetValue("EmailCards", out var emailData) ? emailData : null;
+                        functionResponse = kernel.Data.TryGetValue("EmailFunctionResponse", out var emailResponse) ? emailResponse?.ToString() : null;
                         break;
                     case "calendar":
                         structuredData = kernel.Data.TryGetValue("CalendarCards", out var calendarData) ? calendarData : null;
+                        functionResponse = kernel.Data.TryGetValue("CalendarFunctionResponse", out var calendarResponse) ? calendarResponse?.ToString() : null;
+                        break;
+                    case "sharepoint":
+                        structuredData = kernel.Data.TryGetValue("SharePointCards", out var sharePointData) ? sharePointData : null;
+                        functionResponse = kernel.Data.TryGetValue("SharePointFunctionResponse", out var sharePointResponse) ? sharePointResponse?.ToString() : null;
                         break;
                     default:
                         structuredData = kernel.Data.TryGetValue("TaskCards", out var defaultData) ? defaultData : null;
+                        functionResponse = kernel.Data.TryGetValue("TaskFunctionResponse", out var defaultResponse) ? defaultResponse?.ToString() : null;
                         break;
                 }
+                
+                // Use function response if available, otherwise use a clean minimal response
+                var cleanResponse = functionResponse ?? $"I found {structuredCount} {structuredType}. The details are displayed in the cards below.";
                 
                 processedResponse = new ChatResponse
                 {
                     Id = Guid.NewGuid().ToString(),
                     SessionId = sessionId,
-                    Content = aiResponse, // Clean AI response without prefixes
+                    Content = cleanResponse, // Use function response instead of AI generated content
                     UserId = "ai-assistant",
                     UserName = "AI Assistant",
                     IsAiResponse = true,
@@ -209,6 +146,7 @@ public class ChatController(
                 };
                 
                 _logger.LogInformation("📊 Created structured response - Type: {Type}, Count: {Count}", structuredType, structuredCount);
+                _logger.LogInformation("📝 Using function response: {FunctionResponse}", cleanResponse);
             }
             else
             {
@@ -314,76 +252,28 @@ public class ChatController(
         kernel.Plugins.AddFromType<MailPlugin>("MailPlugin", serviceProvider);
         kernel.Plugins.AddFromType<ToDoPlugin>("ToDoPlugin", serviceProvider);
 
-        // Register MCP tools using HTTPS communication
+        // Add SharePoint MCP Plugin with proper token context
         if (!string.IsNullOrEmpty(accessToken))
         {
-            await RegisterMcpToolsAsync(kernel, accessToken);
+            // The user token is already added to kernel.Data above, which the SharePoint plugin will access
+            // Register SharePoint MCP Plugin
+            kernel.Plugins.AddFromType<SemanticKernelPoc.Api.Plugins.SharePoint.SharePointMcpPlugin>("SharePointMcpPlugin", serviceProvider);
+            
+            _logger.LogInformation("Added OneDrive, Calendar, Mail, ToDo, and SharePoint MCP plugins for user {UserId}.", userOid);
         }
         else
         {
-            _logger.LogWarning("⚠️ No access token available for MCP tools registration");
+            _logger.LogWarning("⚠️ No access token available for SharePoint MCP plugin");
+            
+            // Add other plugins without SharePoint
+            _logger.LogInformation("Added OneDrive, Calendar, Mail, and ToDo plugins for user {UserId} (SharePoint unavailable due to missing token).", userOid);
         }
+
+        // Log available functions for debugging
+        var availableFunctions = kernel.Plugins.SelectMany(p => p.Select(f => $"{p.Name}.{f.Name}")).ToList();
+        _logger.LogInformation("Available functions for user {UserId}: {Functions}", userOid, string.Join(", ", availableFunctions));
 
         return kernel;
-    }
-
-    private async Task RegisterMcpToolsAsync(Kernel kernel, string userAccessToken)
-    {
-        try
-        {
-            _logger.LogInformation("🚀 Starting MCP Client Integration following proper pattern");
-            _logger.LogInformation("📋 User access token length: {TokenLength} characters", userAccessToken?.Length ?? 0);
-            
-            // Create an MCP client using the proper pattern (but with HTTPS instead of STDIO)
-            await using IMcpClient mcpClient = await CreateMcpClientAsync(userAccessToken);
-
-            // Retrieve and display the list provided by the MCP server
-            IList<McpClientTool> tools = await mcpClient.ListToolsAsync();
-            DisplayTools(tools);
-
-            // Create a kernel and register the MCP tools
-            kernel.Plugins.AddFromFunctions("SharePointMCP", tools.Select(tool => tool.AsKernelFunction()));
-            
-            _logger.LogInformation("✅ Successfully registered {ToolCount} MCP tools", tools.Count);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "❌ Failed to register MCP tools: {ErrorMessage}", ex.Message);
-            // Don't rethrow - continue without MCP tools
-        }
-    }
-
-    private async Task<IMcpClient> CreateMcpClientAsync(string userAccessToken)
-    {
-        try
-        {
-            _logger.LogInformation("🔧 Creating MCP client for HTTPS communication...");
-            
-            // Create HTTPS-based MCP client using SSE transport (following sample pattern but with SSE for HTTPS)
-            var mcpClient = await McpClientFactory.CreateAsync(
-                clientTransport: new SseClientTransport(new SseClientTransportOptions
-                {
-                    Endpoint = new Uri("https://localhost:31339/sse")
-                })
-            );
-            
-            _logger.LogInformation("✅ MCP client created successfully");
-            return mcpClient;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "❌ Failed to create MCP client: {ErrorMessage}", ex.Message);
-            throw;
-        }
-    }
-
-    private void DisplayTools(IList<McpClientTool> tools)
-    {
-        _logger.LogInformation("📋 Available MCP tools:");
-        foreach (var tool in tools)
-        {
-            _logger.LogInformation("   • Name: {Name}, Description: {Description}", tool.Name, tool.Description);
-        }
     }
 
     [HttpGet("sessions")]
@@ -460,80 +350,45 @@ public class ChatController(
     {
         return $@"You are an intelligent assistant helping {userName} with their Microsoft 365 tasks and data.
 
-CRITICAL FUNCTION SELECTION RULES:
+CRITICAL: YOU MUST CALL FUNCTIONS - DO NOT GIVE GENERIC RESPONSES!
 
-1. TASK/TODO QUERIES - Use ONLY ToDoPlugin functions:
+MANDATORY FUNCTION CALLING RULES:
+
+1. SHAREPOINT SITES - When user asks for SharePoint sites, you MUST call one of these functions:
+   - SearchSharePointSites - for general ""SharePoint sites"" requests
+   - SearchRecentSharePointSites - for ""recent"", ""last N"", ""latest"" requests  
+   - FindSharePointSitesByKeyword - for specific search terms
+   - SearchSharePointSitesAdvanced - for complex queries
+   
+   Example: User says ""show me my last 3 sharepoint sites"" → CALL SearchRecentSharePointSites with count=3
+
+2. TASK/TODO QUERIES - ALWAYS use ToDoPlugin functions for:
    - ""my tasks"", ""show tasks"", ""get tasks"", ""task list"", ""to-do"", ""todos""
    - ""what tasks do I have"", ""recent tasks"", ""task summary""
-   - NEVER call SharePointMCP functions for task requests
-   - Use: ToDoPlugin.GetRecentNotes, ToDoPlugin.SearchNotes, ToDoPlugin.CreateNote
+   - Task-related searches, creation, and management
 
-2. SHAREPOINT QUERIES - Use ONLY SharePointMCP functions:
-   - ""SharePoint sites"", ""find sites"", ""search sites""
-   - ""workspace sites"", ""team sites"", ""collaboration sites""
-   - Use: SharePointMCP.search_sharepoint_sites, SharePointMCP.find_sharepoint_sites_by_keyword
-
-3. EMAIL QUERIES - Use ONLY MailPlugin functions:
+3. EMAIL QUERIES - ALWAYS use MailPlugin functions for:
    - ""emails"", ""messages"", ""inbox"", ""mail""
-   - Use: MailPlugin.GetRecentEmails, MailPlugin.SearchEmails
+   - ""recent emails"", ""check email"", ""email from [sender]""
 
-4. CALENDAR QUERIES - Use ONLY CalendarPlugin functions:
-   - ""calendar"", ""meetings"", ""appointments"", ""events""
-   - Use: CalendarPlugin.GetUpcomingEvents, CalendarPlugin.GetTodaysEvents
+4. CALENDAR QUERIES - ALWAYS use CalendarPlugin functions for:
+   - ""meetings"", ""appointments"", ""calendar"", ""events""
+   - ""today's meetings"", ""upcoming events"", ""schedule""
 
-5. ONEDRIVE/FILES QUERIES - Use ONLY OneDrivePlugin functions:
-   - ""files"", ""OneDrive"", ""documents""
-   - Use: OneDrivePlugin.GetOneDriveFiles, OneDrivePlugin.GetOneDriveInfo
+5. ONEDRIVE QUERIES - ALWAYS use OneDrivePlugin functions for:
+   - ""files"", ""documents"", ""OneDrive""
+   - ""recent files"", ""my documents""
 
-CRITICAL RESPONSE FORMAT RULES:
+NEVER say ""I cannot access"" or ""I don't have the ability"" - these functions ARE available.
+ALWAYS attempt to call the appropriate function first.
+If a function call fails, THEN explain the error from the function result.
 
-1. CARD DISPLAY vs ANALYSIS MODE:
-   - For DISPLAY requests (""show"", ""list"", ""get"", ""find"", ""my tasks"", etc.): Use default function parameters to get cards
-   - For ANALYSIS requests (""summarize"", ""analyze"", ""what are my tasks about"", ""overview"", etc.): Set analysisMode=true
+When users ask for data, you MUST call the relevant functions to retrieve actual data.
+Do not make assumptions or provide generic responses without calling functions.
 
-2. NATURAL LANGUAGE RESPONSES:
-   - Functions return clean natural language responses (e.g., ""Found 3 recent tasks for {userName}"")
-   - Structured data for UI cards is handled automatically by the system
-   - Provide the function response directly to the user - no additional formatting needed
-   - Do NOT try to format or modify function responses
+Your role is to be a helpful Microsoft 365 assistant that actually retrieves and works with user data through the available functions.
 
-EXAMPLES OF CORRECT FUNCTION CALLS:
-
-Task Request: ""show my tasks""
-✅ CORRECT: ToDoPlugin.GetRecentNotes()
-❌ WRONG: SharePointMCP functions - these are for sites only!
-
-Task Analysis: ""summarize my tasks""
-✅ CORRECT: ToDoPlugin.GetRecentNotes(analysisMode=true)
-❌ WRONG: SharePointMCP functions - these are for sites only!
-
-SharePoint Request: ""find SharePoint sites""
-✅ CORRECT: SharePointMCP.search_sharepoint_sites()
-❌ WRONG: ToDoPlugin functions - these are for tasks only!
-
-EXAMPLES OF CORRECT RESPONSES:
-
-Display Request:
-User: 'show my tasks'
-Function Call: ToDoPlugin.GetRecentNotes(analysisMode=false)
-Function Returns: 'Found 3 recent tasks for {userName}.'
-Correct Response: 'Found 3 recent tasks for {userName}.' (cards will display automatically)
-
-Analysis Request:
-User: 'summarize my tasks'
-Function Call: ToDoPlugin.GetRecentNotes(analysisMode=true)
-Function Returns: 'Found 3 tasks for {userName}. 1 completed, 1 high priority. Most recent tasks cover: Buy groceries, Prepare presentation, Schedule dentist appointment.'
-Correct Response: 'Found 3 tasks for {userName}. 1 completed, 1 high priority. Most recent tasks cover: Buy groceries, Prepare presentation, Schedule dentist appointment.'
-
-FUNCTION USAGE WITH ANALYSIS MODE:
-- GetRecentNotes: Use analysisMode=true for ""summarize tasks"", ""task overview"", ""what are my tasks about""
-- GetRecentEmails: Use analysisMode=true for ""email summary"", ""what emails did I get""
-- SearchNotes: Use analysisMode=true for ""analyze tasks about X"", ""summarize tasks containing Y""
-- For display queries (""show"", ""list"", ""get""), use default analysisMode=false
-
-REMEMBER: NEVER mix function types! Tasks = ToDoPlugin ONLY. SharePoint = SharePointMCP ONLY. 
-
-Always be helpful and accurate. Pay attention to whether the user wants to see items (cards) or understand them (analysis).";
+Always be helpful, accurate, and call the appropriate functions to fulfill user requests.";
     }
 
     private string BuildConversationContext(List<ChatMessage> history, string systemPrompt, string currentMessage)

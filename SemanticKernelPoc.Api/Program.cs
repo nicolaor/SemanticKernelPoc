@@ -60,6 +60,29 @@ builder.Services.AddScoped<IIntentDetectionService, IntentDetectionService>();
 // Add Graph Service for plugins (now using manual OBO approach)
 builder.Services.AddScoped<IGraphService, GraphService>();
 
+// Add HttpClient for MCP communication
+builder.Services.AddHttpClient<IMcpClientService, McpClientService>(client =>
+{
+    // Configure HttpClient for MCP server communication
+    client.Timeout = TimeSpan.FromSeconds(30);
+})
+.ConfigurePrimaryHttpMessageHandler(() =>
+{
+    var handler = new HttpClientHandler();
+    
+    // Accept self-signed certificates in development
+    if (builder.Environment.IsDevelopment())
+    {
+        handler.ClientCertificateOptions = ClientCertificateOption.Manual;
+        handler.ServerCertificateCustomValidationCallback = (httpRequestMessage, cert, cetChain, policyErrors) => true;
+    }
+    
+    return handler;
+});
+
+// Add MCP Client Service
+builder.Services.AddScoped<IMcpClientService, McpClientService>();
+
 // Semantic Kernel configuration (global - for AI service only)
 builder.Services.AddSingleton(sp =>
 {

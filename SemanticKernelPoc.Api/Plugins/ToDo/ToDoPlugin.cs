@@ -267,63 +267,80 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
             _logger.LogInformation("✅ GetRecentNotes: Task processing and filtering completed in {ElapsedMs}ms - {TaskCount} tasks after filtering (total: {TotalMs}ms)",
                 stopwatch.ElapsedMilliseconds - processingStartTime, recentTasks.Count, stopwatch.ElapsedMilliseconds);
 
-            // Create structured task data and store it in kernel data for processing
-            var cardCreationStartTime = stopwatch.ElapsedMilliseconds;
-            
-            var taskCards = recentTasks.Select((t, index) => new
-            {
-                id = $"task_{index}_{t.Task.Id?.GetHashCode().ToString("X")}",
-                title = t.Task.Title ?? "Untitled Task",
-                content = t.Task.Body?.Content?.Length > 100 ?
-                    t.Task.Body.Content[..100] + "..." :
-                    t.Task.Body?.Content ?? "",
-                status = t.Task.Status?.ToString() ?? "NotStarted",
-                priority = t.Task.Importance?.ToString() ?? "Normal",
-                dueDate = t.Task.DueDateTime?.DateTime,
-                dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
-                    DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
-                created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
-                isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
-                webLink = $"https://to-do.office.com/tasks/{t.Task.Id}/details",
-                priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
-                {
-                    "high" => "#ef4444",
-                    "low" => "#10b981",
-                    _ => "#6b7280"
-                },
-                statusColor = t.Task.Status?.ToString()?.ToLower() switch
-                {
-                    "completed" => "#10b981",
-                    "inprogress" => "#f59e0b",
-                    "waitingonothers" => "#8b5cf6",
-                    "deferred" => "#6b7280",
-                    _ => "#3b82f6"
-                }
-            }).ToList();
-
-            // Store structured data in kernel data for the system to process
-            kernel.Data["TaskCards"] = taskCards;
-            kernel.Data["HasStructuredData"] = "true";
-            kernel.Data["StructuredDataType"] = "tasks";
-            kernel.Data["StructuredDataCount"] = taskCards.Count;
-
-            _logger.LogInformation("⏱️ GetRecentNotes: Card creation completed in {ElapsedMs}ms (total: {TotalMs}ms)",
-                stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
-            _logger.LogInformation("⏱️ GetRecentNotes: TOTAL FUNCTION TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
-
             // Return clean, natural language response without prefixes
             if (analysisMode)
             {
-                var completedCount = taskCards.Count(t => t.isCompleted);
-                var highPriorityCount = taskCards.Count(t => t.priority?.ToLower() == "high");
+                // For analysis mode, don't store structured data - return text only
+                // Create minimal task data just for analysis
+                var taskSummary = recentTasks.Select(t => new
+                {
+                    title = t.Task.Title ?? "Untitled Task",
+                    status = t.Task.Status?.ToString() ?? "NotStarted",
+                    priority = t.Task.Importance?.ToString() ?? "Normal",
+                    isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed"
+                }).ToList();
                 
-                return $"Found {taskCards.Count} tasks for {userName}. " +
+                var completedCount = taskSummary.Count(t => t.isCompleted);
+                var highPriorityCount = taskSummary.Count(t => t.priority?.ToLower() == "high");
+                
+                var responseMessage = $"Found {taskSummary.Count} tasks for {userName}. " +
                        $"{completedCount} completed, {highPriorityCount} high priority. " +
-                       $"Most recent tasks cover: {string.Join(", ", taskCards.Take(3).Select(t => t.title))}.";
+                       $"Most recent tasks cover: {string.Join(", ", taskSummary.Take(3).Select(t => t.title))}.";
+                
+                _logger.LogInformation("⏱️ GetRecentNotes: Analysis mode - TOTAL FUNCTION TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
+                return responseMessage;
             }
             else
             {
-                return $"Found {taskCards.Count} recent tasks for {userName}.";
+                // Create structured task data and store it in kernel data for processing
+                var cardCreationStartTime = stopwatch.ElapsedMilliseconds;
+                
+                var taskCards = recentTasks.Select((t, index) => new
+                {
+                    id = $"task_{index}_{t.Task.Id?.GetHashCode().ToString("X")}",
+                    title = t.Task.Title ?? "Untitled Task",
+                    content = t.Task.Body?.Content?.Length > 100 ?
+                        t.Task.Body.Content[..100] + "..." :
+                        t.Task.Body?.Content ?? "",
+                    status = t.Task.Status?.ToString() ?? "NotStarted",
+                    priority = t.Task.Importance?.ToString() ?? "Normal",
+                    dueDate = t.Task.DueDateTime?.DateTime,
+                    dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
+                        DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
+                    created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
+                    isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
+                    webLink = $"https://to-do.office.com/tasks/{t.Task.Id}/details",
+                    priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
+                    {
+                        "high" => "#ef4444",
+                        "low" => "#10b981",
+                        _ => "#6b7280"
+                    },
+                    statusColor = t.Task.Status?.ToString()?.ToLower() switch
+                    {
+                        "completed" => "#10b981",
+                        "inprogress" => "#f59e0b",
+                        "waitingonothers" => "#8b5cf6",
+                        "deferred" => "#6b7280",
+                        _ => "#3b82f6"
+                    }
+                }).ToList();
+
+                // Store structured data in kernel data for the system to process
+                kernel.Data["TaskCards"] = taskCards;
+                kernel.Data["HasStructuredData"] = "true";
+                kernel.Data["StructuredDataType"] = "tasks";
+                kernel.Data["StructuredDataCount"] = taskCards.Count;
+                
+                // Store the function response for the controller to use
+                var responseMessage = $"Found {taskCards.Count} recent tasks for {userName}.";
+                kernel.Data["TaskFunctionResponse"] = responseMessage;
+                
+                _logger.LogInformation("⏱️ GetRecentNotes: Card creation completed in {ElapsedMs}ms (total: {TotalMs}ms)",
+                    stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("⏱️ GetRecentNotes: TOTAL FUNCTION TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
+                
+                return responseMessage;
             }
         }
         catch (Exception ex)
@@ -448,12 +465,7 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
                     listName = t.ListName
                 }).ToList();
 
-                // Store analysis data in kernel data for the system to process
-                kernel.Data["TaskCards"] = analysisData;
-                kernel.Data["HasStructuredData"] = "true";
-                kernel.Data["StructuredDataType"] = "tasks";
-                kernel.Data["StructuredDataCount"] = analysisData.Count;
-                
+                // For analysis mode, don't store structured data - return text only
                 var completedCount = analysisData.Count(t => t.isCompleted);
                 var highPriorityCount = analysisData.Count(t => t.priority?.ToLower() == "high");
                 
