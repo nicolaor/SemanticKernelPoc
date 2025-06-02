@@ -82,22 +82,23 @@ const ThemeToggle: React.FC<ThemeToggleProps> = ({ className = '' }) => {
   return (
     <button
       onClick={cycleTheme}
-      className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:shadow-md ${className}`}
+      className={`inline-flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 hover:shadow-sm ${className}`}
       style={{
         background: "var(--bg-secondary)",
-        color: "var(--text-primary)",
+        color: "var(--text-tertiary)",
         border: "1px solid var(--border-primary)",
       }}
-      title={`Current theme: ${getThemeLabel()}. Click to cycle between System, Light, and Dark themes.`}
+      title={`Theme: ${getThemeLabel()}. Click to cycle between System, Light, and Dark themes.`}
       onMouseEnter={(e) => {
         e.currentTarget.style.background = "var(--bg-tertiary)";
+        e.currentTarget.style.color = "var(--text-secondary)";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.background = "var(--bg-secondary)";
+        e.currentTarget.style.color = "var(--text-tertiary)";
       }}
     >
       {getThemeIcon()}
-      <span>{getThemeLabel()}</span>
     </button>
   );
 };
