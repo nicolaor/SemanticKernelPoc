@@ -175,10 +175,15 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
             )}
 
             <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-              {/* Overdue Badge - Less prominent color scheme */}
+              {/* Overdue Badge - Light orange background matching other badge styles */}
               {isOverdue && (
                 <span
-                  className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-200"
+                  className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium"
+                  style={{
+                    backgroundColor: "#f97316" + "20", // orange-500 with 20% opacity
+                    color: "#f97316", // orange-500
+                    border: "1px solid " + "#f97316" + "40", // orange-500 with 40% opacity
+                  }}
                   title={`This task is overdue since ${note.dueDateFormatted}`}
                 >
                   <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
@@ -267,8 +272,8 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
                 <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
               </svg>
               <p 
-                className={`font-medium text-sm ${isOverdue ? 'text-yellow-700 font-semibold' : ''}`} 
-                style={{ color: isOverdue ? "#b45309" : "var(--text-primary)" }} 
+                className={`font-medium text-sm ${isOverdue ? 'font-semibold' : ''}`} 
+                style={{ color: isOverdue ? "#f97316" : "var(--text-primary)" }} 
                 title={`Task due date: ${note.dueDateFormatted}${isOverdue ? ' (OVERDUE)' : ''}`}
               >
                 Due: {note.dueDateFormatted}
