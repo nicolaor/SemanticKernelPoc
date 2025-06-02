@@ -143,6 +143,36 @@ User Input ──▶ Intent Classification ──▶ Function Selection ──�
 
 ### Local Development Setup
 
+### Quick Start Scripts
+
+**Linux/macOS (Bash):**
+```bash
+# Initial setup (one-time)
+./setup-dev.sh                   # Set up development environment
+
+# Daily development
+./start-all.sh                   # Start all services
+./status.sh                      # Check service status  
+./stop-all.sh                    # Stop all services
+./get-ports.sh                   # Show port configuration
+```
+
+**Windows (PowerShell):**
+```powershell
+# Initial setup (one-time)
+.\setup-dev.ps1                  # Set up development environment
+
+# Daily development  
+.\start-all.ps1                  # Start all services
+.\status.ps1                     # Check service status
+.\stop-all.ps1                   # Stop all services
+.\get-ports.ps1                  # Show port configuration
+```
+
+**💡 TIP**: Use the setup script for first-time configuration, then use start/stop scripts for daily development.
+
+---
+
 #### 1. Clone and Install Dependencies
 
 ```bash
@@ -333,8 +363,11 @@ SemanticKernelPoc/
 │   └── package.json                    #   • Dependencies & scripts
 ├── certs/                              # 🔐 HTTPS certificates
 ├── logs/                               # 📋 Application logs
-├── start-all.sh                        # 🚀 Start all services
-├── stop-all.sh                         # 🛑 Stop all services
+├── setup-dev.sh/ps1                   # 🛠️ Development environment setup
+├── start-all.sh/ps1                   # 🚀 Start all services
+├── stop-all.sh/ps1                    # 🛑 Stop all services
+├── status.sh/ps1                      # 📊 Check service status
+├── get-ports.sh/ps1                   # 🔌 Port configuration info
 └── README.md                           # 📖 This documentation
 ```
 
