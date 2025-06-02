@@ -96,80 +96,30 @@ public class ToDoPlugin : BaseGraphPlugin
         
         try
         {
+            // Step 1: Authenticate and get basic context
             var (success, errorMessage, graphClient, userName) = await GetAuthenticatedGraphClientAsync(kernel);
             if (!success)
             {
                 return errorMessage;
             }
 
-            _logger.LogInformation("🎯 GetRecentNotes started for user {UserName} with parameters: count={Count}, includeCompleted={IncludeCompleted}, timePeriod={TimePeriod}, analysisMode={AnalysisMode}",
-                userName, count, includeCompleted, timePeriod, analysisMode);
+            LogMethodStart(userName, count, includeCompleted, timePeriod, analysisMode);
 
-            // Get all tasks across lists
-            var allTasks = await GetTasksFromAllLists(graphClient, listName, includeCompleted, userName);
+            // Step 2: Retrieve and filter tasks
+            var recentTasks = await RetrieveAndFilterTasksAsync(graphClient, listName, includeCompleted, userName, timePeriod, completionStatus, count);
             
-            if (!allTasks.Any())
+            if (!recentTasks.Any())
             {
-                _logger.LogInformation("⚠️ GetRecentNotes: No tasks found for user {UserName}", userName);
-                return $"No tasks found for {userName}. Create some tasks in Microsoft To Do to get started!";
+                return HandleNoTasksFound(userName);
             }
 
-            // Apply filters and get recent tasks
-            var recentTasks = FilterAndSortTasks(allTasks, timePeriod, completionStatus, count);
+            LogTaskProcessingCompleted(stopwatch.ElapsedMilliseconds, recentTasks.Count);
+            LogTaskDetails(recentTasks);
 
-            _logger.LogInformation("✅ GetRecentNotes: Task processing and filtering completed in {ElapsedMs}ms - {TaskCount} tasks after filtering",
-                stopwatch.ElapsedMilliseconds, recentTasks.Count);
-
-            // DEBUG: Log details about the filtered tasks
-            _logger.LogInformation("🔍 GetRecentNotes DEBUG: Recent tasks details:");
-            for (int i = 0; i < Math.Min(3, recentTasks.Count); i++)
-            {
-                var task = recentTasks[i];
-                _logger.LogInformation("  Task {Index}: ID={TaskId}, Title={Title}, Status={Status}", 
-                    i, task.Task.Id, task.Task.Title, task.Task.Status);
-            }
-
-            // Handle analysis vs card mode response
-            if (analysisMode)
-            {
-                // Clear any existing card data when doing analysis to ensure analysis takes precedence
-                kernel.Data.Remove("TasksCards");
-                kernel.Data.Remove("HasStructuredData");
-                kernel.Data.Remove("StructuredDataType");
-                kernel.Data.Remove("StructuredDataCount");
-                kernel.Data.Remove("TasksFunctionResponse");
-                
-                _logger.LogInformation("🔍 GetRecentNotes: Starting analysis mode - cleared any existing card data");
-                
-                return await _analysisMode.GenerateAISummaryAsync(
-                    kernel,
-                    recentTasks,
-                    "tasks",
-                    userName,
-                    taskData => new
-                    {
-                        Title = taskData.Task.Title ?? SharedConstants.DefaultText.UntitledTask,
-                        Content = taskData.Task.Body?.Content ?? "",
-                        Status = taskData.Task.Status?.ToString() ?? SharedConstants.DefaultText.NotStarted,
-                        Priority = taskData.Task.Importance?.ToString() ?? SharedConstants.DefaultText.Normal,
-                        DueDate = _textProcessor.FormatTaskDueDate(taskData.Task.DueDateTime),
-                        ListName = taskData.ListName,
-                        IsCompleted = taskData.Task.Status == Microsoft.Graph.Models.TaskStatus.Completed,
-                        Created = taskData.Task.CreatedDateTime?.ToString(SharedConstants.DateFormats.StandardDate) ?? SharedConstants.DefaultText.Unknown
-                    });
-            }
-            else
-            {
-                _logger.LogInformation("🔍 GetRecentNotes: Building task cards for {TaskCount} tasks", recentTasks.Count);
-                var taskCards = _cardBuilder.BuildTaskCards(recentTasks, CreateTaskCard);
-                _logger.LogInformation("🔍 GetRecentNotes: Built {CardCount} task cards", taskCards.Count);
-                
-                var functionResponse = $"Found {taskCards.Count} recent tasks for {userName}.";
-
-                _cardBuilder.SetCardData(kernel, "tasks", taskCards, taskCards.Count, functionResponse);
-                _logger.LogInformation("🔍 GetRecentNotes: Set card data in kernel with {CardCount} cards", taskCards.Count);
-                return functionResponse;
-            }
+            // Step 3: Generate response based on mode
+            return analysisMode 
+                ? await HandleAnalysisModeAsync(kernel, recentTasks, userName)
+                : await HandleCardModeAsync(kernel, recentTasks, userName);
         }
         catch (Exception ex)
         {
@@ -182,6 +132,119 @@ public class ToDoPlugin : BaseGraphPlugin
         }
     }
 
+    #region GetRecentNotes Helper Methods
+
+    private void LogMethodStart(string userName, int count, bool includeCompleted, string timePeriod, bool analysisMode)
+    {
+        _logger.LogInformation("🎯 GetRecentNotes started for user {UserName} with parameters: count={Count}, includeCompleted={IncludeCompleted}, timePeriod={TimePeriod}, analysisMode={AnalysisMode}",
+            userName, count, includeCompleted, timePeriod, analysisMode);
+    }
+
+    private async Task<List<(TodoTask Task, string ListName)>> RetrieveAndFilterTasksAsync(
+        GraphServiceClient graphClient, 
+        string listName, 
+        bool includeCompleted, 
+        string userName, 
+        string timePeriod, 
+        string completionStatus, 
+        int count)
+    {
+        // Get all tasks across lists
+        var allTasks = await GetTasksFromAllLists(graphClient, listName, includeCompleted, userName);
+        
+        // Apply filters and get recent tasks
+        return FilterAndSortTasks(allTasks, timePeriod, completionStatus, count);
+    }
+
+    private string HandleNoTasksFound(string userName)
+    {
+        _logger.LogInformation("⚠️ GetRecentNotes: No tasks found for user {UserName}", userName);
+        return $"No tasks found for {userName}. Create some tasks in Microsoft To Do to get started!";
+    }
+
+    private void LogTaskProcessingCompleted(long elapsedMs, int taskCount)
+    {
+        _logger.LogInformation("✅ GetRecentNotes: Task processing and filtering completed in {ElapsedMs}ms - {TaskCount} tasks after filtering",
+            elapsedMs, taskCount);
+    }
+
+    private void LogTaskDetails(List<(TodoTask Task, string ListName)> recentTasks)
+    {
+        _logger.LogInformation("🔍 GetRecentNotes DEBUG: Recent tasks details:");
+        for (int i = 0; i < Math.Min(3, recentTasks.Count); i++)
+        {
+            var task = recentTasks[i];
+            _logger.LogInformation("  Task {Index}: ID={TaskId}, Title={Title}, Status={Status}", 
+                i, task.Task.Id, task.Task.Title, task.Task.Status);
+        }
+    }
+
+    private async Task<string> HandleAnalysisModeAsync(
+        Kernel kernel, 
+        List<(TodoTask Task, string ListName)> recentTasks, 
+        string userName)
+    {
+        // Clear any existing card data when doing analysis to ensure analysis takes precedence
+        ClearKernelCardData(kernel);
+        
+        _logger.LogInformation("🔍 GetRecentNotes: Starting analysis mode - cleared any existing card data");
+        
+        var taskDataTransformer = CreateTaskDataTransformer();
+        
+        return await _analysisMode.GenerateAISummaryAsync(
+            kernel,
+            recentTasks,
+            "tasks",
+            userName,
+            taskDataTransformer);
+    }
+
+    private async Task<string> HandleCardModeAsync(
+        Kernel kernel, 
+        List<(TodoTask Task, string ListName)> recentTasks, 
+        string userName)
+    {
+        _logger.LogInformation("🔍 GetRecentNotes: Building task cards for {TaskCount} tasks", recentTasks.Count);
+        
+        var taskCards = _cardBuilder.BuildTaskCards(recentTasks, CreateTaskCard);
+        
+        _logger.LogInformation("🔍 GetRecentNotes: Built {CardCount} task cards", taskCards.Count);
+        
+        var functionResponse = $"Found {taskCards.Count} recent tasks for {userName}.";
+
+        _cardBuilder.SetCardData(kernel, "tasks", taskCards, taskCards.Count, functionResponse);
+        
+        _logger.LogInformation("🔍 GetRecentNotes: Set card data in kernel with {CardCount} cards", taskCards.Count);
+        
+        return functionResponse;
+    }
+
+    private void ClearKernelCardData(Kernel kernel)
+    {
+        kernel.Data.Remove("TasksCards");
+        kernel.Data.Remove("HasStructuredData");
+        kernel.Data.Remove("StructuredDataType");
+        kernel.Data.Remove("StructuredDataCount");
+        kernel.Data.Remove("TasksFunctionResponse");
+    }
+
+    private Func<(TodoTask Task, string ListName), object> CreateTaskDataTransformer()
+    {
+        return taskData => new
+        {
+            Title = taskData.Task.Title ?? SharedConstants.DefaultText.UntitledTask,
+            Content = taskData.Task.Body?.Content ?? "",
+            Status = taskData.Task.Status?.ToString() ?? SharedConstants.DefaultText.NotStarted,
+            Priority = taskData.Task.Importance?.ToString() ?? SharedConstants.DefaultText.Normal,
+            DueDate = _textProcessor.FormatTaskDueDate(taskData.Task.DueDateTime),
+            ListName = taskData.ListName,
+            IsCompleted = taskData.Task.Status == Microsoft.Graph.Models.TaskStatus.Completed,
+            Created = taskData.Task.CreatedDateTime?.ToString(SharedConstants.DateFormats.StandardDate) ?? SharedConstants.DefaultText.Unknown
+        };
+    }
+
+    #endregion
+
     [KernelFunction, Description("Search tasks and to-do items in Microsoft To Do by content, keywords, or title. Use this for queries like 'search my tasks for [keyword]', 'find To Do items about [topic]'. For display purposes, use analysisMode=false. For analysis of search results like 'summarize tasks about project', use analysisMode=true. This function is ONLY for tasks and should NOT be used for SharePoint sites, OneDrive files, emails, or calendar events.")]
     public async Task<string> SearchNotes(Kernel kernel,
         [Description("Search query to find in task titles and content. Can be keywords, phrases, or specific text")] string searchQuery,
@@ -193,54 +256,31 @@ public class ToDoPlugin : BaseGraphPlugin
     {
         try
         {
+            // Step 1: Authenticate and validate input
             var (success, errorMessage, graphClient, userName) = await GetAuthenticatedGraphClientAsync(kernel);
             if (!success)
             {
                 return errorMessage;
             }
 
-            if (string.IsNullOrWhiteSpace(searchQuery))
+            var validationError = ValidateSearchQuery(searchQuery);
+            if (validationError != null)
             {
-                return "Please provide a search query to find tasks.";
+                return validationError;
             }
 
-            // Get all tasks and filter by search
-            var allTasks = await GetTasksFromAllLists(graphClient, listName, includeCompleted, userName);
-            var matchingTasks = FilterTasksBySearch(allTasks, searchQuery, timePeriod, maxResults);
+            // Step 2: Search and filter tasks
+            var matchingTasks = await SearchAndFilterTasksAsync(graphClient, searchQuery, listName, includeCompleted, timePeriod, maxResults, userName);
 
             if (!matchingTasks.Any())
             {
-                return $"No tasks were found matching your search query: '{searchQuery}'.";
+                return HandleNoSearchResults(searchQuery);
             }
 
-            if (analysisMode)
-            {
-                return await _analysisMode.GenerateAISummaryAsync(
-                    kernel,
-                    matchingTasks,
-                    $"search results for '{searchQuery}'",
-                    userName,
-                    t => new
-                    {
-                        title = t.Task.Title ?? SharedConstants.DefaultText.UntitledTask,
-                        content = t.Task.Body?.Content ?? "",
-                        status = t.Task.Status?.ToString() ?? SharedConstants.DefaultText.NotStarted,
-                        priority = t.Task.Importance?.ToString() ?? SharedConstants.DefaultText.Normal,
-                        dueDate = _textProcessor.FormatTaskDueDate(t.Task.DueDateTime),
-                        created = t.Task.CreatedDateTime?.ToString(SharedConstants.DateFormats.FriendlyDate) ?? SharedConstants.DefaultText.Unknown,
-                        isCompleted = t.Task.Status == Microsoft.Graph.Models.TaskStatus.Completed,
-                        matchReason = DetermineTaskMatchReason(t.Task, searchQuery),
-                        listName = t.ListName
-                    });
-            }
-            else
-            {
-                var taskCards = _cardBuilder.BuildTaskCards(matchingTasks, (task, index) => CreateSearchTaskCard(task, index, searchQuery));
-                var functionResponse = $"Found {taskCards.Count} tasks matching '{searchQuery}' for {userName}.";
-
-                _cardBuilder.SetCardData(kernel, "tasks", taskCards, taskCards.Count, functionResponse);
-                return functionResponse;
-            }
+            // Step 3: Generate response based on mode
+            return analysisMode
+                ? await HandleSearchAnalysisModeAsync(kernel, matchingTasks, searchQuery, userName)
+                : await HandleSearchCardModeAsync(kernel, matchingTasks, searchQuery, userName);
         }
         catch (Exception ex)
         {
@@ -249,6 +289,81 @@ public class ToDoPlugin : BaseGraphPlugin
             return $"Error searching tasks: {ex.Message}";
         }
     }
+
+    #region SearchNotes Helper Methods
+
+    private string ValidateSearchQuery(string searchQuery)
+    {
+        return string.IsNullOrWhiteSpace(searchQuery) 
+            ? "Please provide a search query to find tasks." 
+            : null;
+    }
+
+    private async Task<List<(TodoTask Task, string ListName)>> SearchAndFilterTasksAsync(
+        GraphServiceClient graphClient,
+        string searchQuery,
+        string listName,
+        bool includeCompleted,
+        string timePeriod,
+        int maxResults,
+        string userName)
+    {
+        // Get all tasks and filter by search
+        var allTasks = await GetTasksFromAllLists(graphClient, listName, includeCompleted, userName);
+        return FilterTasksBySearch(allTasks, searchQuery, timePeriod, maxResults);
+    }
+
+    private string HandleNoSearchResults(string searchQuery)
+    {
+        return $"No tasks were found matching your search query: '{searchQuery}'.";
+    }
+
+    private async Task<string> HandleSearchAnalysisModeAsync(
+        Kernel kernel,
+        List<(TodoTask Task, string ListName)> matchingTasks,
+        string searchQuery,
+        string userName)
+    {
+        var searchTaskDataTransformer = CreateSearchTaskDataTransformer(searchQuery);
+
+        return await _analysisMode.GenerateAISummaryAsync(
+            kernel,
+            matchingTasks,
+            $"search results for '{searchQuery}'",
+            userName,
+            searchTaskDataTransformer);
+    }
+
+    private async Task<string> HandleSearchCardModeAsync(
+        Kernel kernel,
+        List<(TodoTask Task, string ListName)> matchingTasks,
+        string searchQuery,
+        string userName)
+    {
+        var taskCards = _cardBuilder.BuildTaskCards(matchingTasks, (task, index) => CreateSearchTaskCard(task, index, searchQuery));
+        var functionResponse = $"Found {taskCards.Count} tasks matching '{searchQuery}' for {userName}.";
+
+        _cardBuilder.SetCardData(kernel, "tasks", taskCards, taskCards.Count, functionResponse);
+        return functionResponse;
+    }
+
+    private Func<(TodoTask Task, string ListName), object> CreateSearchTaskDataTransformer(string searchQuery)
+    {
+        return t => new
+        {
+            title = t.Task.Title ?? SharedConstants.DefaultText.UntitledTask,
+            content = t.Task.Body?.Content ?? "",
+            status = t.Task.Status?.ToString() ?? SharedConstants.DefaultText.NotStarted,
+            priority = t.Task.Importance?.ToString() ?? SharedConstants.DefaultText.Normal,
+            dueDate = _textProcessor.FormatTaskDueDate(t.Task.DueDateTime),
+            created = t.Task.CreatedDateTime?.ToString(SharedConstants.DateFormats.FriendlyDate) ?? SharedConstants.DefaultText.Unknown,
+            isCompleted = t.Task.Status == Microsoft.Graph.Models.TaskStatus.Completed,
+            matchReason = DetermineTaskMatchReason(t.Task, searchQuery),
+            listName = t.ListName
+        };
+    }
+
+    #endregion
 
     [KernelFunction, Description("Mark a task as complete or update its status")]
     public async Task<string> UpdateNoteStatus(Kernel kernel,

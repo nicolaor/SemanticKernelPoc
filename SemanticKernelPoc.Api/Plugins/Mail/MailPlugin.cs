@@ -39,67 +39,18 @@ public class MailPlugin : BaseGraphPlugin
     {
         try
         {
+            // Step 1: Authenticate and get client
             var (success, errorMessage, graphClient, userName) = await GetAuthenticatedGraphClientAsync(kernel);
             if (!success)
             {
                 return errorMessage;
             }
 
-            // Build filters for the query
-            var filters = BuildEmailFilters(timePeriod, readStatus, importance);
+            // Step 2: Retrieve emails with filters
+            var messages = await RetrieveRecentEmailsAsync(graphClient, count, timePeriod, readStatus, importance, analysisMode);
 
-            // Select appropriate fields based on analysis mode
-            var selectFields = analysisMode 
-                ? SharedConstants.GraphSelectFields.EmailWithBody
-                : SharedConstants.GraphSelectFields.EmailBasic;
-
-            // Execute the Graph API query
-            var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
-            {
-                requestConfig.QueryParameters.Top = Math.Min(count, SharedConstants.QueryLimits.MaxEmailCount);
-                requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
-                requestConfig.QueryParameters.Select = selectFields;
-                
-                if (filters.Any())
-                {
-                    requestConfig.QueryParameters.Filter = string.Join(" and ", filters);
-                }
-            });
-
-            if (messages?.Value?.Any() == true)
-            {
-                if (analysisMode)
-                {
-                    // Use the shared analysis mode service
-                    return await _analysisMode.GenerateAISummaryAsync(
-                        kernel,
-                        messages.Value,
-                        "emails",
-                        userName,
-                        msg => new
-                        {
-                            From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? SharedConstants.DefaultText.Unknown,
-                            Subject = msg.Subject ?? SharedConstants.DefaultText.NoSubject,
-                            ReceivedDate = msg.ReceivedDateTime?.ToString(SharedConstants.DateFormats.StandardDate) ?? SharedConstants.DefaultText.Unknown,
-                            Content = _textProcessor.CleanAndLimitContent(msg.Body?.Content ?? msg.BodyPreview),
-                            IsRead = msg.IsRead ?? false,
-                            Importance = msg.Importance?.ToString() ?? SharedConstants.DefaultText.Normal
-                        });
-                }
-                else
-                {
-                    // Use the shared card builder service
-                    var emailCards = _cardBuilder.BuildEmailCards(messages.Value, (msg, index) => CreateEmailCard(msg, index));
-                    var functionResponse = $"Found {emailCards.Count} recent emails for {userName}.";
-
-                    _cardBuilder.SetCardData(kernel, "emails", emailCards, emailCards.Count, functionResponse);
-                    return functionResponse;
-                }
-            }
-            else
-            {
-                return $"No emails found for {userName} with the specified criteria.";
-            }
+            // Step 3: Generate response based on mode and results
+            return await GenerateEmailResponseAsync(kernel, messages, userName, analysisMode);
         }
         catch (Exception ex)
         {
@@ -107,6 +58,91 @@ public class MailPlugin : BaseGraphPlugin
             return $"❌ Error retrieving emails: {ex.Message}";
         }
     }
+
+    #region GetRecentEmails Helper Methods
+
+    private async Task<IList<Message>?> RetrieveRecentEmailsAsync(
+        GraphServiceClient graphClient, 
+        int count, 
+        string timePeriod, 
+        string readStatus, 
+        string importance, 
+        bool analysisMode)
+    {
+        var filters = BuildEmailFilters(timePeriod, readStatus, importance);
+        var selectFields = GetEmailSelectFields(analysisMode);
+
+        var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
+        {
+            requestConfig.QueryParameters.Top = Math.Min(count, SharedConstants.QueryLimits.MaxEmailCount);
+            requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
+            requestConfig.QueryParameters.Select = selectFields;
+            
+            if (filters.Any())
+            {
+                requestConfig.QueryParameters.Filter = string.Join(" and ", filters);
+            }
+        });
+
+        return messages?.Value;
+    }
+
+    private async Task<string> GenerateEmailResponseAsync(
+        Kernel kernel, 
+        IList<Message>? messages, 
+        string userName, 
+        bool analysisMode)
+    {
+        if (messages?.Any() != true)
+        {
+            return $"No emails found for {userName} with the specified criteria.";
+        }
+
+        return analysisMode 
+            ? await GenerateEmailAnalysisResponse(kernel, messages, userName)
+            : GenerateEmailCardResponse(kernel, messages, userName);
+    }
+
+    private async Task<string> GenerateEmailAnalysisResponse(Kernel kernel, IList<Message> messages, string userName)
+    {
+        return await _analysisMode.GenerateAISummaryAsync(
+            kernel,
+            messages,
+            "emails",
+            userName,
+            CreateEmailAnalysisTransformer());
+    }
+
+    private string GenerateEmailCardResponse(Kernel kernel, IList<Message> messages, string userName)
+    {
+        var emailCards = _cardBuilder.BuildEmailCards(messages, (msg, index) => CreateEmailCard(msg, index));
+        var functionResponse = $"Found {emailCards.Count} recent emails for {userName}.";
+
+        _cardBuilder.SetCardData(kernel, "emails", emailCards, emailCards.Count, functionResponse);
+        return functionResponse;
+    }
+
+    private string[] GetEmailSelectFields(bool analysisMode)
+    {
+        return analysisMode 
+            ? SharedConstants.GraphSelectFields.EmailWithBody
+            : SharedConstants.GraphSelectFields.EmailBasic;
+    }
+
+    private Func<Message, object> CreateEmailAnalysisTransformer()
+    {
+        return msg => new
+        {
+            From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? SharedConstants.DefaultText.Unknown,
+            Subject = msg.Subject ?? SharedConstants.DefaultText.NoSubject,
+            ReceivedDate = msg.ReceivedDateTime?.ToString(SharedConstants.DateFormats.StandardDate) ?? SharedConstants.DefaultText.Unknown,
+            Content = _textProcessor.CleanAndLimitContent(msg.Body?.Content ?? msg.BodyPreview),
+            IsRead = msg.IsRead ?? false,
+            Importance = msg.Importance?.ToString() ?? SharedConstants.DefaultText.Normal
+        };
+    }
+
+    #endregion
 
     [KernelFunction, Description("Create email draft")]
     public async Task<string> CreateEmailDraft(Kernel kernel,
@@ -176,66 +212,24 @@ public class MailPlugin : BaseGraphPlugin
     {
         try
         {
+            // Step 1: Authenticate and validate
             var (success, errorMessage, graphClient, userName) = await GetAuthenticatedGraphClientAsync(kernel);
             if (!success)
             {
                 return errorMessage;
             }
 
-            if (IsSearchParametersEmpty(searchQuery, fromSender, subjectContains))
+            var validationError = ValidateSearchParameters(searchQuery, fromSender, subjectContains);
+            if (validationError != null)
             {
-                return "Please provide at least one search parameter: searchQuery, fromSender, or subjectContains.";
+                return validationError;
             }
 
-            // Build search filters
-            var filters = BuildSearchFilters(searchQuery, fromSender, subjectContains, timePeriod, unreadOnly);
+            // Step 2: Execute search
+            var messages = await ExecuteEmailSearchAsync(graphClient, searchQuery, fromSender, subjectContains, timePeriod, maxResults, unreadOnly, analysisMode);
 
-            // Execute search
-            var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
-            {
-                requestConfig.QueryParameters.Top = Math.Min(maxResults, SharedConstants.QueryLimits.MaxEmailCount);
-                requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
-                requestConfig.QueryParameters.Select = analysisMode 
-                    ? SharedConstants.GraphSelectFields.EmailWithBody
-                    : SharedConstants.GraphSelectFields.EmailBasic;
-                
-                if (filters.Any())
-                {
-                    requestConfig.QueryParameters.Filter = string.Join(" and ", filters);
-                }
-            });
-
-            if (messages?.Value?.Any() == true)
-            {
-                if (analysisMode)
-                {
-                    return await _analysisMode.GenerateAISummaryAsync(
-                        kernel,
-                        messages.Value,
-                        "emails",
-                        userName,
-                        msg => new
-                        {
-                            From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? SharedConstants.DefaultText.Unknown,
-                            Subject = msg.Subject ?? SharedConstants.DefaultText.NoSubject,
-                            ReceivedDate = msg.ReceivedDateTime?.ToString(SharedConstants.DateFormats.StandardDate) ?? SharedConstants.DefaultText.Unknown,
-                            Content = _textProcessor.CleanAndLimitContent(msg.Body?.Content ?? msg.BodyPreview),
-                            MatchReason = DetermineMatchReason(msg, searchQuery, fromSender, subjectContains)
-                        });
-                }
-                else
-                {
-                    var emailCards = _cardBuilder.BuildEmailCards(messages.Value, (msg, index) => CreateSearchEmailCard(msg, index, searchQuery, fromSender, subjectContains));
-                    var functionResponse = $"Found {emailCards.Count} emails matching your search for {userName}.";
-
-                    _cardBuilder.SetCardData(kernel, "emails", emailCards, emailCards.Count, functionResponse);
-                    return functionResponse;
-                }
-            }
-            else
-            {
-                return $"No emails found matching your search criteria for {userName}.";
-            }
+            // Step 3: Generate response based on mode and results
+            return await GenerateSearchResponseAsync(kernel, messages, userName, searchQuery, fromSender, subjectContains, analysisMode);
         }
         catch (Exception ex)
         {
@@ -243,6 +237,111 @@ public class MailPlugin : BaseGraphPlugin
             return $"❌ Error searching emails: {ex.Message}";
         }
     }
+
+    #region SearchEmails Helper Methods
+
+    private string? ValidateSearchParameters(string searchQuery, string fromSender, string subjectContains)
+    {
+        return IsSearchParametersEmpty(searchQuery, fromSender, subjectContains)
+            ? "Please provide at least one search parameter: searchQuery, fromSender, or subjectContains."
+            : null;
+    }
+
+    private async Task<IList<Message>?> ExecuteEmailSearchAsync(
+        GraphServiceClient graphClient,
+        string searchQuery,
+        string fromSender,
+        string subjectContains,
+        string timePeriod,
+        int maxResults,
+        bool unreadOnly,
+        bool analysisMode)
+    {
+        var filters = BuildSearchFilters(searchQuery, fromSender, subjectContains, timePeriod, unreadOnly);
+        var selectFields = GetEmailSelectFields(analysisMode);
+
+        var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
+        {
+            requestConfig.QueryParameters.Top = Math.Min(maxResults, SharedConstants.QueryLimits.MaxEmailCount);
+            requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
+            requestConfig.QueryParameters.Select = selectFields;
+            
+            if (filters.Any())
+            {
+                requestConfig.QueryParameters.Filter = string.Join(" and ", filters);
+            }
+        });
+
+        return messages?.Value;
+    }
+
+    private async Task<string> GenerateSearchResponseAsync(
+        Kernel kernel,
+        IList<Message>? messages,
+        string userName,
+        string searchQuery,
+        string fromSender,
+        string subjectContains,
+        bool analysisMode)
+    {
+        if (messages?.Any() != true)
+        {
+            return $"No emails found matching your search criteria for {userName}.";
+        }
+
+        return analysisMode
+            ? await GenerateSearchAnalysisResponse(kernel, messages, userName, searchQuery, fromSender, subjectContains)
+            : GenerateSearchCardResponse(kernel, messages, userName, searchQuery, fromSender, subjectContains);
+    }
+
+    private async Task<string> GenerateSearchAnalysisResponse(
+        Kernel kernel,
+        IList<Message> messages,
+        string userName,
+        string searchQuery,
+        string fromSender,
+        string subjectContains)
+    {
+        var transformer = CreateSearchAnalysisTransformer(searchQuery, fromSender, subjectContains);
+        
+        return await _analysisMode.GenerateAISummaryAsync(
+            kernel,
+            messages,
+            "emails",
+            userName,
+            transformer);
+    }
+
+    private string GenerateSearchCardResponse(
+        Kernel kernel,
+        IList<Message> messages,
+        string userName,
+        string searchQuery,
+        string fromSender,
+        string subjectContains)
+    {
+        var emailCards = _cardBuilder.BuildEmailCards(messages, (msg, index) => 
+            CreateSearchEmailCard(msg, index, searchQuery, fromSender, subjectContains));
+        
+        var functionResponse = $"Found {emailCards.Count} emails matching your search for {userName}.";
+
+        _cardBuilder.SetCardData(kernel, "emails", emailCards, emailCards.Count, functionResponse);
+        return functionResponse;
+    }
+
+    private Func<Message, object> CreateSearchAnalysisTransformer(string searchQuery, string fromSender, string subjectContains)
+    {
+        return msg => new
+        {
+            From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? SharedConstants.DefaultText.Unknown,
+            Subject = msg.Subject ?? SharedConstants.DefaultText.NoSubject,
+            ReceivedDate = msg.ReceivedDateTime?.ToString(SharedConstants.DateFormats.StandardDate) ?? SharedConstants.DefaultText.Unknown,
+            Content = _textProcessor.CleanAndLimitContent(msg.Body?.Content ?? msg.BodyPreview),
+            MatchReason = DetermineMatchReason(msg, searchQuery, fromSender, subjectContains)
+        };
+    }
+
+    #endregion
 
     #region Private Helper Methods
 

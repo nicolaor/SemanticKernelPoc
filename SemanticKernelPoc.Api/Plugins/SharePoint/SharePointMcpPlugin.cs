@@ -29,70 +29,21 @@ public class SharePointMcpPlugin
     {
         try
         {
+            // Step 1: Validate authentication
             var userToken = await GetUserTokenFromKernel(kernel);
             if (string.IsNullOrEmpty(userToken))
             {
                 return "Error: User authentication token not available.";
             }
 
-            _logger.LogInformation("Searching SharePoint sites with query: {Query}, createdAfter: {CreatedAfter}, createdBefore: {CreatedBefore}, maxResults: {MaxResults}, analysisMode: {AnalysisMode}",
-                query, createdAfter, createdBefore, maxResults, analysisMode);
+            // Step 2: Log and execute search
+            LogSearchRequest(query, createdAfter, createdBefore, maxResults, analysisMode);
+            var sites = await ExecuteSharePointSearch(userToken, query, createdAfter, createdBefore, maxResults);
 
-            var parameters = new Dictionary<string, object>
-            {
-                ["userToken"] = userToken,
-                ["query"] = query ?? string.Empty,
-                ["createdAfter"] = createdAfter ?? string.Empty,
-                ["createdBefore"] = createdBefore ?? string.Empty,
-                ["maxResults"] = maxResults
-            };
-
-            var result = await _mcpClientService.CallMcpFunctionAsync("SearchSharePointSites", parameters);
-
-            _logger.LogInformation("SharePoint sites search completed successfully. Result: {Result}", result);
-            
-            // Parse the MCP result to extract sites data
-            var sites = ParseMcpResult(result);
-            
-            if (analysisMode)
-            {
-                // For analysis mode, don't store structured data - return text only
-                var userName = kernel.Data.TryGetValue("UserName", out object userNameObj) ? userNameObj?.ToString() : "User";
-                var teamSiteCount = sites.Count(s => s.WebTemplate.ToLower() == "group");
-                var classSiteCount = sites.Count(s => s.WebTemplate.ToLower() == "sts");
-                
-                return $"Found {sites.Count} SharePoint sites for {userName}. " +
-                       $"Breakdown: {teamSiteCount} Team sites, {classSiteCount} Classic sites, " +
-                       $"{sites.Count - teamSiteCount - classSiteCount} other types. " +
-                       (!string.IsNullOrEmpty(query) ? $"Search query: '{query}'. " : "") +
-                       $"Sites range from {sites.Min(s => s.Created):yyyy-MM-dd} to {sites.Max(s => s.Created):yyyy-MM-dd}.";
-            }
-            else
-            {
-                // For card display mode, create structured data for cards
-                var sharePointCards = sites.Select(site => new
-                {
-                    title = site.Title,
-                    url = site.Url,
-                    created = site.Created.ToString("yyyy-MM-dd"),
-                    webTemplate = site.WebTemplate,
-                    description = site.Description
-                }).ToList();
-
-                kernel.Data["SharePointCards"] = sharePointCards;
-                kernel.Data["HasStructuredData"] = "true";
-                kernel.Data["StructuredDataType"] = "sharepoint";
-                kernel.Data["StructuredDataCount"] = sharePointCards.Count;
-
-                var responseMessage = $"I found {sharePointCards.Count} SharePoint sites" + 
-                       (!string.IsNullOrEmpty(query) ? $" matching '{query}'" : "") + 
-                       ". The details are displayed in the cards below.";
-                
-                // Store the function response for the controller to use
-                kernel.Data["SharePointFunctionResponse"] = responseMessage;
-                
-                return responseMessage;
-            }
+            // Step 3: Generate response based on mode
+            return analysisMode 
+                ? GenerateAnalysisResponse(kernel, sites, query)
+                : GenerateCardResponse(kernel, sites, query);
         }
         catch (Exception ex)
         {
@@ -100,6 +51,110 @@ public class SharePointMcpPlugin
             return $"Error searching SharePoint sites: {ex.Message}";
         }
     }
+
+    #region SharePoint Search Helper Methods
+
+    private void LogSearchRequest(string query, string createdAfter, string createdBefore, int maxResults, bool analysisMode)
+    {
+        _logger.LogInformation("Searching SharePoint sites with query: {Query}, createdAfter: {CreatedAfter}, createdBefore: {CreatedBefore}, maxResults: {MaxResults}, analysisMode: {AnalysisMode}",
+            query, createdAfter, createdBefore, maxResults, analysisMode);
+    }
+
+    private async Task<List<SharePointSiteData>> ExecuteSharePointSearch(string userToken, string query, string createdAfter, string createdBefore, int maxResults)
+    {
+        var parameters = BuildSearchParameters(userToken, query, createdAfter, createdBefore, maxResults);
+        var result = await _mcpClientService.CallMcpFunctionAsync("SearchSharePointSites", parameters);
+        
+        _logger.LogInformation("SharePoint sites search completed successfully. Result: {Result}", result);
+        
+        return ParseMcpResult(result);
+    }
+
+    private Dictionary<string, object> BuildSearchParameters(string userToken, string query, string createdAfter, string createdBefore, int maxResults)
+    {
+        return new Dictionary<string, object>
+        {
+            ["userToken"] = userToken,
+            ["query"] = query ?? string.Empty,
+            ["createdAfter"] = createdAfter ?? string.Empty,
+            ["createdBefore"] = createdBefore ?? string.Empty,
+            ["maxResults"] = maxResults
+        };
+    }
+
+    private string GenerateAnalysisResponse(Kernel kernel, List<SharePointSiteData> sites, string query)
+    {
+        var userName = GetUserNameFromKernel(kernel);
+        var siteBreakdown = AnalyzeSiteBreakdown(sites);
+        var dateRange = GetSiteDateRange(sites);
+        
+        return $"Found {sites.Count} SharePoint sites for {userName}. " +
+               $"Breakdown: {siteBreakdown.TeamSites} Team sites, {siteBreakdown.ClassicSites} Classic sites, " +
+               $"{siteBreakdown.OtherSites} other types. " +
+               (!string.IsNullOrEmpty(query) ? $"Search query: '{query}'. " : "") +
+               $"Sites range from {dateRange.MinDate:yyyy-MM-dd} to {dateRange.MaxDate:yyyy-MM-dd}.";
+    }
+
+    private string GenerateCardResponse(Kernel kernel, List<SharePointSiteData> sites, string query)
+    {
+        var sharePointCards = BuildSharePointCards(sites);
+        SetKernelCardData(kernel, sharePointCards);
+        
+        var responseMessage = BuildCardResponseMessage(sharePointCards.Count, query);
+        kernel.Data["SharePointFunctionResponse"] = responseMessage;
+        
+        return responseMessage;
+    }
+
+    private string GetUserNameFromKernel(Kernel kernel)
+    {
+        return kernel.Data.TryGetValue("UserName", out object userNameObj) ? userNameObj?.ToString() : "User";
+    }
+
+    private (int TeamSites, int ClassicSites, int OtherSites) AnalyzeSiteBreakdown(List<SharePointSiteData> sites)
+    {
+        var teamSiteCount = sites.Count(s => s.WebTemplate.ToLower() == "group");
+        var classSiteCount = sites.Count(s => s.WebTemplate.ToLower() == "sts");
+        var otherSiteCount = sites.Count - teamSiteCount - classSiteCount;
+        
+        return (teamSiteCount, classSiteCount, otherSiteCount);
+    }
+
+    private (DateTime MinDate, DateTime MaxDate) GetSiteDateRange(List<SharePointSiteData> sites)
+    {
+        return sites.Any() 
+            ? (sites.Min(s => s.Created), sites.Max(s => s.Created))
+            : (DateTime.MinValue, DateTime.MinValue);
+    }
+
+    private List<object> BuildSharePointCards(List<SharePointSiteData> sites)
+    {
+        return sites.Select(site => new
+        {
+            title = site.Title,
+            url = site.Url,
+            created = site.Created.ToString("yyyy-MM-dd"),
+            webTemplate = site.WebTemplate,
+            description = site.Description
+        }).Cast<object>().ToList();
+    }
+
+    private void SetKernelCardData(Kernel kernel, List<object> sharePointCards)
+    {
+        kernel.Data["SharePointCards"] = sharePointCards;
+        kernel.Data["HasStructuredData"] = "true";
+        kernel.Data["StructuredDataType"] = "sharepoint";
+        kernel.Data["StructuredDataCount"] = sharePointCards.Count;
+    }
+
+    private string BuildCardResponseMessage(int cardCount, string query)
+    {
+        return $"I found {cardCount} SharePoint sites" + 
+               (!string.IsNullOrEmpty(query) ? $" matching '{query}'" : "") + 
+               ". The details are displayed in the cards below.";
+    }
+
+    #endregion
 
     [KernelFunction]
     [Description("Search for recently created SharePoint sites within a specific time period (created within the last specified number of days). Use this ONLY when user specifically mentions time periods like 'last 30 days', 'this month', 'past week', 'sites created in the last 7 days'. Do NOT use this for queries like 'last 3 sites' or 'most recent 5 sites' - those should use search_sharepoint_sites with maxResults instead.")]
@@ -111,66 +166,21 @@ public class SharePointMcpPlugin
     {
         try
         {
+            // Step 1: Validate authentication
             var userToken = await GetUserTokenFromKernel(kernel);
             if (string.IsNullOrEmpty(userToken))
             {
                 return "Error: User authentication token not available.";
             }
 
-            _logger.LogInformation("Searching for recent SharePoint sites created in the last {DaysBack} days, analysisMode: {AnalysisMode}", daysBack, analysisMode);
+            // Step 2: Execute recent sites search
+            LogRecentSearchRequest(daysBack, analysisMode);
+            var sites = await ExecuteRecentSharePointSearch(userToken, query, daysBack);
 
-            var parameters = new Dictionary<string, object>
-            {
-                ["userToken"] = userToken,
-                ["query"] = query ?? string.Empty,
-                ["daysBack"] = daysBack
-            };
-
-            var result = await _mcpClientService.CallMcpFunctionAsync("SearchRecentSharePointSites", parameters);
-
-            _logger.LogInformation("Recent SharePoint sites search completed successfully. Result: {Result}", result);
-            
-            // Parse the MCP result to extract sites data
-            var sites = ParseMcpResult(result);
-            
-            if (analysisMode)
-            {
-                // For analysis mode, don't store structured data - return text only
-                var userName = kernel.Data.TryGetValue("UserName", out object userNameObj) ? userNameObj?.ToString() : "User";
-                var timePeriod = daysBack == 7 ? "past week" : daysBack == 30 ? "past month" : $"past {daysBack} days";
-                
-                return $"Found {sites.Count} SharePoint sites created in the {timePeriod} for {userName}. " +
-                       $"Site types: {string.Join(", ", sites.GroupBy(s => s.WebTemplate).Select(g => $"{g.Count()} {g.Key}"))}. " +
-                       (!string.IsNullOrEmpty(query) ? $"Filtered by: '{query}'. " : "") +
-                       (sites.Any() ? $"Most recent: {sites.OrderByDescending(s => s.Created).First().Title} ({sites.Max(s => s.Created):yyyy-MM-dd})." : "");
-            }
-            else
-            {
-                // For card display mode, create structured data for cards
-                var sharePointCards = sites.Select(site => new
-                {
-                    title = site.Title,
-                    url = site.Url,
-                    created = site.Created.ToString("yyyy-MM-dd"),
-                    webTemplate = site.WebTemplate,
-                    description = site.Description
-                }).ToList();
-
-                kernel.Data["SharePointCards"] = sharePointCards;
-                kernel.Data["HasStructuredData"] = "true";
-                kernel.Data["StructuredDataType"] = "sharepoint";
-                kernel.Data["StructuredDataCount"] = sharePointCards.Count;
-
-                var timePeriod = daysBack == 7 ? "past week" : daysBack == 30 ? "past month" : $"past {daysBack} days";
-                var responseMessage = $"I found {sharePointCards.Count} SharePoint sites created in the {timePeriod}" + 
-                       (!string.IsNullOrEmpty(query) ? $" matching '{query}'" : "") + 
-                       ". The details are displayed in the cards below.";
-                
-                // Store the function response for the controller to use
-                kernel.Data["SharePointFunctionResponse"] = responseMessage;
-                
-                return responseMessage;
-            }
+            // Step 3: Generate response based on mode
+            return analysisMode 
+                ? GenerateRecentAnalysisResponse(kernel, sites, query, daysBack)
+                : GenerateRecentCardResponse(kernel, sites, query, daysBack);
         }
         catch (Exception ex)
         {
@@ -178,6 +188,84 @@ public class SharePointMcpPlugin
             return $"Error searching recent SharePoint sites: {ex.Message}";
         }
     }
+
+    #region Recent SharePoint Sites Helper Methods
+
+    private void LogRecentSearchRequest(int daysBack, bool analysisMode)
+    {
+        _logger.LogInformation("Searching for recent SharePoint sites created in the last {DaysBack} days, analysisMode: {AnalysisMode}", daysBack, analysisMode);
+    }
+
+    private async Task<List<SharePointSiteData>> ExecuteRecentSharePointSearch(string userToken, string query, int daysBack)
+    {
+        var parameters = BuildRecentSearchParameters(userToken, query, daysBack);
+        var result = await _mcpClientService.CallMcpFunctionAsync("SearchRecentSharePointSites", parameters);
+        
+        _logger.LogInformation("Recent SharePoint sites search completed successfully. Result: {Result}", result);
+        
+        return ParseMcpResult(result);
+    }
+
+    private Dictionary<string, object> BuildRecentSearchParameters(string userToken, string query, int daysBack)
+    {
+        return new Dictionary<string, object>
+        {
+            ["userToken"] = userToken,
+            ["query"] = query ?? string.Empty,
+            ["daysBack"] = daysBack
+        };
+    }
+
+    private string GenerateRecentAnalysisResponse(Kernel kernel, List<SharePointSiteData> sites, string query, int daysBack)
+    {
+        var userName = GetUserNameFromKernel(kernel);
+        var timePeriod = FormatTimePeriod(daysBack);
+        var siteTypesSummary = BuildSiteTypesSummary(sites);
+        var mostRecentInfo = GetMostRecentSiteInfo(sites);
+        
+        return $"Found {sites.Count} SharePoint sites created in the {timePeriod} for {userName}. " +
+               $"Site types: {siteTypesSummary}. " +
+               (!string.IsNullOrEmpty(query) ? $"Filtered by: '{query}'. " : "") +
+               mostRecentInfo;
+    }
+
+    private string GenerateRecentCardResponse(Kernel kernel, List<SharePointSiteData> sites, string query, int daysBack)
+    {
+        var sharePointCards = BuildSharePointCards(sites);
+        SetKernelCardData(kernel, sharePointCards);
+        
+        var timePeriod = FormatTimePeriod(daysBack);
+        var responseMessage = BuildRecentCardResponseMessage(sharePointCards.Count, timePeriod, query);
+        kernel.Data["SharePointFunctionResponse"] = responseMessage;
+        
+        return responseMessage;
+    }
+
+    private string FormatTimePeriod(int daysBack)
+    {
+        return daysBack == 7 ? "past week" : daysBack == 30 ? "past month" : $"past {daysBack} days";
+    }
+
+    private string BuildSiteTypesSummary(List<SharePointSiteData> sites)
+    {
+        return string.Join(", ", sites.GroupBy(s => s.WebTemplate).Select(g => $"{g.Count()} {g.Key}"));
+    }
+
+    private string GetMostRecentSiteInfo(List<SharePointSiteData> sites)
+    {
+        return sites.Any() 
+            ? $"Most recent: {sites.OrderByDescending(s => s.Created).First().Title} ({sites.Max(s => s.Created):yyyy-MM-dd})."
+            : "";
+    }
+
+    private string BuildRecentCardResponseMessage(int cardCount, string timePeriod, string query)
+    {
+        return $"I found {cardCount} SharePoint sites created in the {timePeriod}" + 
+               (!string.IsNullOrEmpty(query) ? $" matching '{query}'" : "") + 
+               ". The details are displayed in the cards below.";
+    }
+
+    #endregion
 
     [KernelFunction]
     [Description("Find SharePoint sites that match specific keywords in their title or description. Use this when user provides specific keywords, names, or terms to search for. Best for targeted searches when user knows what they're looking for.")]

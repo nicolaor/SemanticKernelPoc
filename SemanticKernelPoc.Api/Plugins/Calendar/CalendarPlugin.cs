@@ -94,66 +94,113 @@ public class CalendarPlugin : BaseGraphPlugin
             kernel,
             async (graphClient, userName) =>
             {
-                var today = DateTime.Today;
-                var tomorrow = today.AddDays(1);
+                // Step 1: Get today's events
+                var todaysEvents = await GetTodaysEventsFromCalendar(graphClient);
 
-                var events = await graphClient.Me.Calendar.CalendarView.GetAsync(requestConfig =>
+                // Step 2: Process today's events if found
+                if (todaysEvents?.Any() == true)
                 {
-                    requestConfig.QueryParameters.StartDateTime = today.ToString(SharedConstants.DateFormats.GraphApiDateTime);
-                    requestConfig.QueryParameters.EndDateTime = tomorrow.ToString(SharedConstants.DateFormats.GraphApiDateTime);
-                    requestConfig.QueryParameters.Orderby = ["start/dateTime"];
-                });
-
-                if (events?.Value?.Any() == true)
-                {
-                    if (analysisMode)
-                    {
-                        return await _analysisMode.GenerateAISummaryAsync(
-                            kernel,
-                            events.Value,
-                            "today's calendar events",
-                            userName,
-                            evt => new
-                            {
-                                Subject = evt.Subject ?? SharedConstants.DefaultText.NoSubject,
-                                Start = _textProcessor.FormatEventDateTime(evt.Start),
-                                End = _textProcessor.FormatEventDateTime(evt.End),
-                                Location = evt.Location?.DisplayName ?? SharedConstants.DefaultText.NoLocation,
-                                IsAllDay = evt.IsAllDay ?? false
-                            });
-                    }
-                    else
-                    {
-                        var calendarCards = _cardBuilder.BuildCalendarCards(events.Value, (evt, index) => CreateTodayCalendarCard(evt, index));
-                        var functionResponse = $"Found {calendarCards.Count} events for today ({today:yyyy-MM-dd}) for {userName}.";
-
-                        _cardBuilder.SetCardData(kernel, "calendar", calendarCards, calendarCards.Count, functionResponse);
-                        return functionResponse;
-                    }
+                    return await ProcessTodaysEvents(kernel, todaysEvents, userName, analysisMode);
                 }
 
-                // No events today, check for upcoming events in the next 7 days
-                var weekFromNow = today.AddDays(7);
-                var upcomingEvents = await graphClient.Me.Calendar.CalendarView.GetAsync(requestConfig =>
-                {
-                    requestConfig.QueryParameters.StartDateTime = today.ToString(SharedConstants.DateFormats.GraphApiDateTime);
-                    requestConfig.QueryParameters.EndDateTime = weekFromNow.ToString(SharedConstants.DateFormats.GraphApiDateTime);
-                    requestConfig.QueryParameters.Top = 3;
-                    requestConfig.QueryParameters.Orderby = ["start/dateTime"];
-                });
-
-                if (upcomingEvents?.Value?.Any() == true)
-                {
-                    var nextEvent = upcomingEvents.Value.First();
-                    var nextEventDate = _textProcessor.FormatEventDateTime(nextEvent.Start);
-                    return $"No events today for {userName}. Next upcoming event: {nextEvent.Subject} on {nextEventDate}.";
-                }
-
-                return $"No events today for {userName}. No upcoming events in the next 7 days.";
+                // Step 3: No events today - look for next upcoming event
+                return await HandleNoEventsToday(graphClient, userName);
             },
             "GetTodaysEvents"
         );
     }
+
+    #region GetTodaysEvents Helper Methods
+
+    private async Task<IList<Event>?> GetTodaysEventsFromCalendar(GraphServiceClient graphClient)
+    {
+        var today = DateTime.Today;
+        var tomorrow = today.AddDays(1);
+
+        var events = await graphClient.Me.Calendar.CalendarView.GetAsync(requestConfig =>
+        {
+            requestConfig.QueryParameters.StartDateTime = today.ToString(SharedConstants.DateFormats.GraphApiDateTime);
+            requestConfig.QueryParameters.EndDateTime = tomorrow.ToString(SharedConstants.DateFormats.GraphApiDateTime);
+            requestConfig.QueryParameters.Orderby = ["start/dateTime"];
+        });
+
+        return events?.Value;
+    }
+
+    private async Task<string> ProcessTodaysEvents(Kernel kernel, IList<Event> todaysEvents, string userName, bool analysisMode)
+    {
+        var today = DateTime.Today;
+
+        if (analysisMode)
+        {
+            return await GenerateTodaysEventsAnalysis(kernel, todaysEvents, userName);
+        }
+        else
+        {
+            return GenerateTodaysEventsCards(kernel, todaysEvents, userName, today);
+        }
+    }
+
+    private async Task<string> GenerateTodaysEventsAnalysis(Kernel kernel, IList<Event> todaysEvents, string userName)
+    {
+        return await _analysisMode.GenerateAISummaryAsync(
+            kernel,
+            todaysEvents,
+            "today's calendar events",
+            userName,
+            CreateTodaysEventAnalysisTransformer());
+    }
+
+    private string GenerateTodaysEventsCards(Kernel kernel, IList<Event> todaysEvents, string userName, DateTime today)
+    {
+        var calendarCards = _cardBuilder.BuildCalendarCards(todaysEvents, (evt, index) => CreateTodayCalendarCard(evt, index));
+        var functionResponse = $"Found {calendarCards.Count} events for today ({today:yyyy-MM-dd}) for {userName}.";
+
+        _cardBuilder.SetCardData(kernel, "calendar", calendarCards, calendarCards.Count, functionResponse);
+        return functionResponse;
+    }
+
+    private async Task<string> HandleNoEventsToday(GraphServiceClient graphClient, string userName)
+    {
+        var today = DateTime.Today;
+        var weekFromNow = today.AddDays(7);
+
+        var upcomingEvents = await graphClient.Me.Calendar.CalendarView.GetAsync(requestConfig =>
+        {
+            requestConfig.QueryParameters.StartDateTime = today.ToString(SharedConstants.DateFormats.GraphApiDateTime);
+            requestConfig.QueryParameters.EndDateTime = weekFromNow.ToString(SharedConstants.DateFormats.GraphApiDateTime);
+            requestConfig.QueryParameters.Top = 3;
+            requestConfig.QueryParameters.Orderby = ["start/dateTime"];
+        });
+
+        if (upcomingEvents?.Value?.Any() == true)
+        {
+            return FormatNoEventsWithUpcoming(upcomingEvents.Value, userName);
+        }
+
+        return $"No events today for {userName}. No upcoming events in the next 7 days.";
+    }
+
+    private string FormatNoEventsWithUpcoming(IList<Event> upcomingEvents, string userName)
+    {
+        var nextEvent = upcomingEvents.First();
+        var nextEventDate = _textProcessor.FormatEventDateTime(nextEvent.Start);
+        return $"No events today for {userName}. Next upcoming event: {nextEvent.Subject} on {nextEventDate}.";
+    }
+
+    private Func<Event, object> CreateTodaysEventAnalysisTransformer()
+    {
+        return evt => new
+        {
+            Subject = evt.Subject ?? SharedConstants.DefaultText.NoSubject,
+            Start = _textProcessor.FormatEventDateTime(evt.Start),
+            End = _textProcessor.FormatEventDateTime(evt.End),
+            Location = evt.Location?.DisplayName ?? SharedConstants.DefaultText.NoLocation,
+            IsAllDay = evt.IsAllDay ?? false
+        };
+    }
+
+    #endregion
 
     [KernelFunction, Description("Add a new event to the user's calendar")]
     public async Task<string> AddCalendarEvent(Kernel kernel,
