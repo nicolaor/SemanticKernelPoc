@@ -24,6 +24,11 @@ appsettings.*.json
 .env.production
 .env.*.local
 
+# Local configuration files (frontend)
+**/config.local.json
+**/config.local.ts
+**/config.local.js
+
 # User secrets
 secrets.json
 user-secrets.json
