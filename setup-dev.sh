@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 🛠️ SemanticKernelPoc Development Setup Script
-# This script helps set up the development environment
+# This script automates the development environment setup
 
 set -e
 
@@ -57,87 +57,68 @@ echo "⚙️ Setting up configuration files..."
 
 API_CONFIG="SemanticKernelPoc.Api/appsettings.Development.json"
 API_TEMPLATE="SemanticKernelPoc.Api/appsettings.Development.template.json"
-MCP_CONFIG="SemanticKernelPoc.McpServer/appsettings.Development.json"
+REACT_CONFIG="SemanticKernelPoc.Web/src/config/config.local.json"
+REACT_TEMPLATE="SemanticKernelPoc.Web/src/config/config.example.json"
 
-# Check if development config exists
+# Setup API configuration
 if [ ! -f "$API_CONFIG" ]; then
     if [ -f "$API_TEMPLATE" ]; then
-        echo "📄 Copying configuration template..."
+        echo "📄 Copying API configuration template..."
         cp "$API_TEMPLATE" "$API_CONFIG"
         echo "✅ Created $API_CONFIG from template"
     else
-        echo "⚠️ Template file not found. Creating basic configuration..."
+        echo "📄 Creating API configuration from scratch..."
         cat > "$API_CONFIG" << 'EOF'
 {
   "AzureAd": {
     "Instance": "https://login.microsoftonline.com/",
     "TenantId": "YOUR_TENANT_ID_HERE",
-    "ClientId": "YOUR_CLIENT_ID_HERE",
-    "CallbackPath": "/signin-oidc",
-    "Scopes": "access_as_user https://graph.microsoft.com/.default",
-    "ClientSecret": "YOUR_CLIENT_SECRET_HERE",
-    "Audience": "api://YOUR_CLIENT_ID_HERE"
+    "ClientId": "YOUR_CLIENT_ID_HERE"
   },
   "SemanticKernel": {
-    "DeploymentOrModelId": "gpt-4o-mini",
-    "Endpoint": "",
-    "ApiKey": "YOUR_OPENAI_API_KEY_HERE",
-    "UseAzureOpenAI": false
+    "AzureOpenAI": {
+      "Endpoint": "https://your-resource.openai.azure.com/",
+      "ApiKey": "YOUR_OPENAI_API_KEY_HERE",
+      "DeploymentName": "gpt-4"
+    }
   },
   "Logging": {
     "LogLevel": {
       "Default": "Information",
-      "Microsoft.AspNetCore": "Warning",
-      "Microsoft.Identity": "Debug"
-    }
-  },
-  "AllowedHosts": "*",
-  "AllowedOrigins": [
-    "https://localhost:31337"
-  ],
-  "McpServer": {
-    "Url": "https://localhost:31339"
-  },
-  "Kestrel": {
-    "Endpoints": {
-      "Https": {
-        "Url": "https://localhost:31338",
-        "Certificate": {
-          "Path": "../certs/localhost.crt",
-          "KeyPath": "../certs/localhost.key"
-        }
-      }
+      "Microsoft.AspNetCore": "Warning"
     }
   }
 }
 EOF
+        echo "✅ Created $API_CONFIG"
     fi
 else
     echo "✅ API configuration already exists"
 fi
 
-# Create MCP server config if it doesn't exist
-if [ ! -f "$MCP_CONFIG" ]; then
-    echo "📄 Creating MCP server configuration..."
-    cat > "$MCP_CONFIG" << 'EOF'
+# Setup React client configuration
+if [ ! -f "$REACT_CONFIG" ]; then
+    if [ -f "$REACT_TEMPLATE" ]; then
+        echo "📄 Copying React client configuration template..."
+        cp "$REACT_TEMPLATE" "$REACT_CONFIG"
+        echo "✅ Created $REACT_CONFIG from template"
+    else
+        echo "📄 Creating React client configuration from scratch..."
+        cat > "$REACT_CONFIG" << 'EOF'
 {
-  "AzureAd": {
-    "TenantId": "YOUR_TENANT_ID_HERE",
-    "ClientId": "YOUR_CLIENT_ID_HERE",
-    "ClientSecret": "YOUR_CLIENT_SECRET_HERE"
+  "azure": {
+    "tenantId": "YOUR_TENANT_ID_HERE",
+    "clientId": "YOUR_CLIENT_ID_HERE"
   },
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft": "Warning",
-      "Microsoft.Hosting.Lifetime": "Information"
-    }
+  "app": {
+    "redirectUri": "https://localhost:31337"
   }
 }
 EOF
-    echo "✅ Created $MCP_CONFIG"
+        echo "✅ Created $REACT_CONFIG"
+    fi
 else
-    echo "✅ MCP server configuration already exists"
+    echo "✅ React client configuration already exists"
 fi
 
 # Setup certificates
@@ -154,7 +135,7 @@ if [ ! -f "certs/localhost.crt" ] || [ ! -f "certs/localhost.key" ]; then
         -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost" \
         -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
     
-    # Create PFX file
+    # Create PFX file for .NET
     openssl pkcs12 -export -out certs/localhost.pfx -inkey certs/localhost.key -in certs/localhost.crt -passout pass:
     
     echo "✅ Certificate generated"
@@ -180,17 +161,25 @@ echo "📋 Next Steps:"
 echo "=============="
 echo ""
 echo "1. 🔐 Configure Azure AD App Registration:"
-echo "   - Go to Azure Portal > Azure Active Directory > App registrations"
-echo "   - Create new registration or use existing one"
-echo "   - Configure authentication, permissions, and create client secret"
-echo "   - See DEVELOPMENT-SETUP.md for detailed instructions"
+echo "   - Go to Azure Portal → Azure Active Directory → App registrations"
+echo "   - Create new registration: 'Semantic Kernel PoC'"
+echo "   - Redirect URI: https://localhost:31337 (Single-page application)"
+echo "   - Configure API permissions (see README for full list):"
+echo "     • User.Read, Mail.Read, Mail.Send, Calendars.Read, Calendars.ReadWrite"
+echo "     • Files.Read.All, Sites.Read.All, Tasks.ReadWrite"
+echo "   - Grant admin consent if required"
 echo ""
-echo "2. ⚙️ Update configuration files with your credentials:"
+echo "2. 🤖 Set up Azure OpenAI Service:"
+echo "   - Create Azure OpenAI resource in Azure Portal"
+echo "   - Deploy GPT-4 model with deployment name 'gpt-4'"
+echo "   - Get endpoint and API key from resource overview"
+echo ""
+echo "3. ⚙️ Update configuration files with your credentials:"
 echo "   - Edit: $API_CONFIG"
-echo "   - Edit: $MCP_CONFIG"
-echo "   - Replace all 'YOUR_*_HERE' placeholders with actual values"
+echo "   - Edit: $REACT_CONFIG"
+echo "   - Replace all 'YOUR_*_HERE' placeholders with actual values from Azure"
 echo ""
-echo "3. 🔒 Trust the SSL certificate:"
+echo "4. 🔒 Trust the SSL certificate:"
 
 # OS-specific certificate trust instructions
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -202,18 +191,24 @@ elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
     echo "   # Run as Administrator in PowerShell:"
     echo "   Import-Certificate -FilePath \"certs\\localhost.crt\" -CertStoreLocation Cert:\\LocalMachine\\Root"
 else
-    echo "   See DEVELOPMENT-SETUP.md for your operating system"
+    echo "   See README for platform-specific instructions"
 fi
 
 echo ""
-echo "4. 🚀 Start the application:"
+echo "5. 🚀 Start the application:"
 echo "   ./start-all.sh"
 echo ""
-echo "5. 🌐 Access the application:"
+echo "6. 🌐 Access the application:"
 echo "   - React App: https://localhost:31337"
 echo "   - API Docs: https://localhost:31338/swagger"
+echo "   - MCP Server: http://localhost:3001 (internal)"
 echo ""
-echo "📖 For detailed setup instructions, see: DEVELOPMENT-SETUP.md"
-echo "🆘 For troubleshooting, check the logs in the logs/ directory"
+echo "📖 For detailed setup instructions and troubleshooting, see the README.md"
+echo "🔍 Monitor logs in real-time: tail -f logs/api-server.log"
+echo ""
+echo "⚠️  Important Security Notes:"
+echo "   • Configuration files with secrets are git-ignored"
+echo "   • Never commit files containing 'YOUR_*_HERE' values"
+echo "   • Use the template files for sharing configuration structure"
 echo ""
 echo "Happy coding! 🎯" 
