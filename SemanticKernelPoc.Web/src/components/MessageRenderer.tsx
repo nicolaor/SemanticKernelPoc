@@ -13,6 +13,18 @@ interface MessageRendererProps {
 const MessageRenderer: React.FC<MessageRendererProps> = ({ message }) => {
   const { content, isAiResponse, cards } = message;
 
+  // Debug logging to see what we're receiving
+  if (isAiResponse && cards) {
+    console.log("🔍 MessageRenderer Debug - Cards received:", {
+      type: cards.type,
+      dataType: typeof cards.data,
+      dataIsArray: Array.isArray(cards.data),
+      dataLength: Array.isArray(cards.data) ? cards.data.length : 'not array',
+      count: cards.count,
+      data: cards.data
+    });
+  }
+
   // If this is an AI response with structured card data, render cards
   if (isAiResponse && cards) {
     return (
@@ -26,11 +38,11 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({ message }) => {
         
         {/* Render the appropriate card based on type */}
         {cards.type === "tasks" && (
-          <NoteCard notes={cards.data as TaskCardData[]} />
+          <NoteCard notes={Array.isArray(cards.data) ? cards.data as TaskCardData[] : []} />
         )}
         
         {cards.type === "emails" && (
-          <EmailCard emails={cards.data as EmailCardData[]} />
+          <EmailCard emails={Array.isArray(cards.data) ? cards.data as EmailCardData[] : []} />
         )}
         
         {cards.type === "calendar" && (
@@ -39,12 +51,12 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({ message }) => {
             Count: cards.count || 0,
             UserName: cards.userName || "User",
             TimeRange: cards.timeRange || "recent",
-            Events: cards.data as any[]
+            Events: Array.isArray(cards.data) ? cards.data as any[] : []
           }} />
         )}
         
         {cards.type === "sharepoint" && (
-          <SharePointCard sites={cards.data as SharePointCardData[]} />
+          <SharePointCard sites={Array.isArray(cards.data) ? cards.data as SharePointCardData[] : []} />
         )}
         
         {cards.type === "capabilities" && (

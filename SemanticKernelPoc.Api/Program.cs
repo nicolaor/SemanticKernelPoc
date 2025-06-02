@@ -6,6 +6,7 @@ using SemanticKernelPoc.Api.Models;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
 using SemanticKernelPoc.Api.Services;
+using SemanticKernelPoc.Api.Services.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -65,6 +66,11 @@ builder.Services.AddSingleton<IGraphClientFactory>(sp =>
     new GraphClientFactory(
         sp.GetRequiredService<ILogger<GraphClientFactory>>(), 
         sp.GetRequiredService<IConfiguration>()));
+
+// Add shared services for refactored code
+builder.Services.AddScoped<ICardBuilderService, CardBuilderService>();
+builder.Services.AddScoped<IAnalysisModeService, AnalysisModeService>();
+builder.Services.AddScoped<ITextProcessingService, TextProcessingService>();
 
 // Add HttpClient for MCP communication
 builder.Services.AddHttpClient<IMcpClientService, McpClientService>(client =>

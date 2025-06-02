@@ -292,6 +292,62 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
 });
 
 const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
+  
+  // Debug logging to see what we're receiving
+  console.log("🔍 NoteCard Debug - Notes received:", {
+    notes: notes,
+    notesType: typeof notes,
+    notesIsArray: Array.isArray(notes),
+    notesLength: Array.isArray(notes) ? notes.length : 'not array',
+    notesIsNull: notes === null,
+    notesIsUndefined: notes === undefined
+  });
+  
+  // Defensive check to prevent crash if notes is null or undefined
+  if (!notes || !Array.isArray(notes)) {
+    console.log("⚠️ NoteCard: No valid notes data, showing fallback");
+    return (
+      <div className="w-full max-w-2xl mx-auto">
+        <div
+          className="rounded-xl p-6 text-center"
+          style={{
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-primary)",
+          }}
+        >
+          <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3" style={{ background: "var(--bg-tertiary)" }}>
+            <svg className="w-6 h-6" style={{ color: "var(--text-tertiary)" }} fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 16a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+            </svg>
+          </div>
+          <p style={{ color: "var(--text-secondary)" }}>No task data available</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (notes.length === 0) {
+    console.log("⚠️ NoteCard: Notes array is empty");
+    return (
+      <div className="w-full max-w-2xl mx-auto">
+        <div
+          className="rounded-xl p-6 text-center"
+          style={{
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-primary)",
+          }}
+        >
+          <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3" style={{ background: "var(--bg-tertiary)" }}>
+            <svg className="w-6 h-6" style={{ color: "var(--text-tertiary)" }} fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 16a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+            </svg>
+          </div>
+          <p style={{ color: "var(--text-secondary)" }}>No tasks found</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full max-w-2xl mx-auto">
       {/* Header */}

@@ -98,12 +98,12 @@ public class ChatController(
                 switch (structuredType)
                 {
                     case "tasks":
-                        structuredData = kernel.Data.TryGetValue("TaskCards", out var taskData) ? taskData : null;
-                        functionResponse = kernel.Data.TryGetValue("TaskFunctionResponse", out var taskResponse) ? taskResponse?.ToString() : null;
+                        structuredData = kernel.Data.TryGetValue("TasksCards", out var taskData) ? taskData : null;
+                        functionResponse = kernel.Data.TryGetValue("TasksFunctionResponse", out var taskResponse) ? taskResponse?.ToString() : null;
                         break;
                     case "emails":
-                        structuredData = kernel.Data.TryGetValue("EmailCards", out var emailData) ? emailData : null;
-                        functionResponse = kernel.Data.TryGetValue("EmailFunctionResponse", out var emailResponse) ? emailResponse?.ToString() : null;
+                        structuredData = kernel.Data.TryGetValue("EmailsCards", out var emailData) ? emailData : null;
+                        functionResponse = kernel.Data.TryGetValue("EmailsFunctionResponse", out var emailResponse) ? emailResponse?.ToString() : null;
                         break;
                     case "calendar":
                         structuredData = kernel.Data.TryGetValue("CalendarCards", out var calendarData) ? calendarData : null;
@@ -114,8 +114,8 @@ public class ChatController(
                         functionResponse = kernel.Data.TryGetValue("SharePointFunctionResponse", out var sharePointResponse) ? sharePointResponse?.ToString() : null;
                         break;
                     default:
-                        structuredData = kernel.Data.TryGetValue("TaskCards", out var defaultData) ? defaultData : null;
-                        functionResponse = kernel.Data.TryGetValue("TaskFunctionResponse", out var defaultResponse) ? defaultResponse?.ToString() : null;
+                        structuredData = kernel.Data.TryGetValue("TasksCards", out var defaultData) ? defaultData : null;
+                        functionResponse = kernel.Data.TryGetValue("TasksFunctionResponse", out var defaultResponse) ? defaultResponse?.ToString() : null;
                         break;
                 }
                 
@@ -169,6 +169,18 @@ public class ChatController(
             if (processedResponse.Cards != null)
             {
                 _logger.LogInformation("Card Type: {Type}, Count: {Count}", processedResponse.Cards.Type, processedResponse.Cards.Count);
+                
+                // DEBUG: Log the actual cards data being sent
+                try
+                {
+                    var cardsJson = System.Text.Json.JsonSerializer.Serialize(processedResponse.Cards.Data);
+                    _logger.LogInformation("🔍 DEBUG - Cards Data JSON being sent: {CardsJson}", cardsJson);
+                    _logger.LogInformation("🔍 DEBUG - Cards Data Type: {DataType}", processedResponse.Cards.Data?.GetType().Name ?? "null");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ Failed to serialize cards data for debugging");
+                }
             }
             _logger.LogInformation("=== PROCESSED RESPONSE ANALYSIS END ===");
 
@@ -366,6 +378,14 @@ MANDATORY FUNCTION CALLING RULES:
    - ""my tasks"", ""show tasks"", ""get tasks"", ""task list"", ""to-do"", ""todos""
    - ""what tasks do I have"", ""recent tasks"", ""task summary""
    - Task-related searches, creation, and management
+   
+   IMPORTANT: Use analysisMode=true for:
+   - ""which task should I tackle first"", ""what should I focus on"", ""prioritize my tasks""
+   - ""summarize my tasks"", ""what are my tasks about"", ""task summary""
+   - ""recommend"", ""suggest"", ""advice"", ""help me decide"", ""most important""
+   - Any request asking for analysis, advice, recommendations, or prioritization
+   
+   Use analysisMode=false ONLY for simple listing/display requests like ""show my tasks""
 
 3. EMAIL QUERIES - ALWAYS use MailPlugin functions for:
    - ""emails"", ""messages"", ""inbox"", ""mail""
