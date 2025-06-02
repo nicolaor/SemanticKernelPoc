@@ -226,9 +226,9 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
                 <span 
                   className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium"
                   style={{
-                    backgroundColor: "#3b82f6" + "20", // blue-500 with 20% opacity
-                    color: "#3b82f6", // blue-500
-                    border: "1px solid " + "#3b82f6" + "40", // blue-500 with 40% opacity
+                    backgroundColor: "#8b5cf6" + "20", // violet-500 with 20% opacity
+                    color: "#8b5cf6", // violet-500
+                    border: "1px solid " + "#8b5cf6" + "40", // violet-500 with 40% opacity
                   }}
                   title={`Search match found in: ${note.matchReason}`}
                 >
