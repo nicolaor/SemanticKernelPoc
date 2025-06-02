@@ -277,13 +277,20 @@ function App() {
                 <ThemeToggle />
                 <button
                   onClick={handleLogout}
-                  className="px-5 py-2 text-sm font-semibold rounded-lg text-white transition-all duration-200"
+                  className="px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
                   style={{
-                    background: "var(--accent-primary)",
-                    border: "1px solid var(--accent-secondary)",
+                    background: "var(--bg-secondary)",
+                    color: "var(--text-secondary)",
+                    border: "1px solid var(--border-primary)",
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-secondary)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent-primary)")}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--bg-tertiary)";
+                    e.currentTarget.style.color = "var(--text-primary)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--bg-secondary)";
+                    e.currentTarget.style.color = "var(--text-secondary)";
+                  }}
                 >
                   Sign Out
                 </button>
