@@ -89,8 +89,6 @@ function App() {
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !userProfile || isLoading) return;
 
-    console.log(`Sending message: "${newMessage}"`);
-
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       sessionId: `session_${userProfile.userId}_${new Date().toISOString().split('T')[0]}`,

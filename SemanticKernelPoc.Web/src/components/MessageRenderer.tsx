@@ -13,18 +13,6 @@ interface MessageRendererProps {
 const MessageRenderer: React.FC<MessageRendererProps> = ({ message }) => {
   const { content, isAiResponse, cards } = message;
 
-  // Debug logging to see what we're receiving
-  if (isAiResponse && cards) {
-    console.log("🔍 MessageRenderer Debug - Cards received:", {
-      type: cards.type,
-      dataType: typeof cards.data,
-      dataIsArray: Array.isArray(cards.data),
-      dataLength: Array.isArray(cards.data) ? cards.data.length : 'not array',
-      count: cards.count,
-      data: cards.data
-    });
-  }
-
   // If this is an AI response with structured card data, render cards
   if (isAiResponse && cards) {
     return (

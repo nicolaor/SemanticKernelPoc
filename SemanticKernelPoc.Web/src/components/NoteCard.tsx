@@ -293,19 +293,8 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
 
 const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
   
-  // Debug logging to see what we're receiving
-  console.log("🔍 NoteCard Debug - Notes received:", {
-    notes: notes,
-    notesType: typeof notes,
-    notesIsArray: Array.isArray(notes),
-    notesLength: Array.isArray(notes) ? notes.length : 'not array',
-    notesIsNull: notes === null,
-    notesIsUndefined: notes === undefined
-  });
-  
   // Defensive check to prevent crash if notes is null or undefined
   if (!notes || !Array.isArray(notes)) {
-    console.log("⚠️ NoteCard: No valid notes data, showing fallback");
     return (
       <div className="w-full max-w-2xl mx-auto">
         <div
@@ -327,7 +316,6 @@ const NoteCard: React.FC<NoteCardProps> = ({ notes }) => {
   }
 
   if (notes.length === 0) {
-    console.log("⚠️ NoteCard: Notes array is empty");
     return (
       <div className="w-full max-w-2xl mx-auto">
         <div
