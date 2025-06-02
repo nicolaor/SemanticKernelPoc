@@ -20,8 +20,8 @@ public class SharePointSearchTool
     }
 
     [McpServerTool]
-    [Description("Search for CoffeeNet (CN365) sites in SharePoint using the CN365TemplateId property. These are special workspace sites identified by having a non-empty CN365TemplateId.")]
-    public async Task<string> SearchCoffeeNetSites(
+    [Description("Search for SharePoint sites using various filters and criteria. Find sites by title, description, creation date, and other properties.")]
+    public async Task<string> SearchSharePointSites(
         [Description("User access token for authentication")] string userToken,
         [Description("Optional text search query to filter sites by title or description")] string query = null,
         [Description("Optional filter for sites created after this date (ISO 8601 format: yyyy-MM-ddTHH:mm:ssZ)")] string createdAfter = null,
@@ -35,7 +35,7 @@ public class SharePointSearchTool
                 return "Error: User token is required for authentication.";
             }
 
-            _logger.LogInformation("Searching CoffeeNet sites with query: {Query}, createdAfter: {CreatedAfter}, createdBefore: {CreatedBefore}, maxResults: {MaxResults}",
+            _logger.LogInformation("Searching SharePoint sites with query: {Query}, createdAfter: {CreatedAfter}, createdBefore: {CreatedBefore}, maxResults: {MaxResults}",
                 query, createdAfter, createdBefore, maxResults);
 
             // Validate and constrain max results
@@ -50,23 +50,23 @@ public class SharePointSearchTool
                 MaxResults = maxResults
             };
 
-            var searchResponse = await _sharePointSearchService.SearchCoffeeNetSitesAsync(searchRequest, userToken);
+            var searchResponse = await _sharePointSearchService.SearchSharePointSitesAsync(searchRequest, userToken);
 
             var result = FormatSearchResults(searchResponse);
 
-            _logger.LogInformation("CoffeeNet sites search completed successfully. Found {Count} sites.", searchResponse.Sites.Count);
+            _logger.LogInformation("SharePoint sites search completed successfully. Found {Count} sites.", searchResponse.Sites.Count);
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error searching CoffeeNet sites");
-            return $"Error searching CoffeeNet sites: {ex.Message}";
+            _logger.LogError(ex, "Error searching SharePoint sites");
+            return $"Error searching SharePoint sites: {ex.Message}";
         }
     }
 
     [McpServerTool]
-    [Description("Search for recently created CoffeeNet sites (created within the last specified number of days).")]
-    public async Task<string> SearchRecentCoffeeNetSites(
+    [Description("Search for recently created SharePoint sites (created within the last specified number of days).")]
+    public async Task<string> SearchRecentSharePointSites(
         [Description("User access token for authentication")] string userToken,
         [Description("Optional text search query to filter sites")] string query = null,
         [Description("Number of days to look back (default: 30)")] int daysBack = 30)
@@ -80,7 +80,7 @@ public class SharePointSearchTool
 
             var createdAfter = DateTime.UtcNow.AddDays(-Math.Abs(daysBack)).ToString("yyyy-MM-dd");
 
-            _logger.LogInformation("Searching for recent CoffeeNet sites created after {CreatedAfter}", createdAfter);
+            _logger.LogInformation("Searching for recent SharePoint sites created after {CreatedAfter}", createdAfter);
 
             var searchRequest = new SharePointSearchRequest
             {
@@ -89,20 +89,20 @@ public class SharePointSearchTool
                 MaxResults = 50
             };
 
-            var searchResponse = await _sharePointSearchService.SearchCoffeeNetSitesAsync(searchRequest, userToken);
+            var searchResponse = await _sharePointSearchService.SearchSharePointSitesAsync(searchRequest, userToken);
 
             return FormatSearchResults(searchResponse);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error searching recent CoffeeNet sites");
-            return $"Error searching recent CoffeeNet sites: {ex.Message}";
+            _logger.LogError(ex, "Error searching recent SharePoint sites");
+            return $"Error searching recent SharePoint sites: {ex.Message}";
         }
     }
 
     [McpServerTool]
-    [Description("Find CoffeeNet sites that match specific keywords in their title or description.")]
-    public async Task<string> FindCoffeeNetSitesByKeyword(
+    [Description("Find SharePoint sites that match specific keywords in their title or description.")]
+    public async Task<string> FindSharePointSitesByKeyword(
         [Description("User access token for authentication")] string userToken,
         [Description("Keywords to search for in site titles and descriptions")] string keywords,
         [Description("Maximum number of results to return (default: 20, max: 500)")] int maxResults = 20)
@@ -119,7 +119,7 @@ public class SharePointSearchTool
                 return "Please provide keywords to search for.";
             }
 
-            _logger.LogInformation("Searching CoffeeNet sites by keywords: {Keywords}", keywords);
+            _logger.LogInformation("Searching SharePoint sites by keywords: {Keywords}", keywords);
 
             var searchRequest = new SharePointSearchRequest
             {
@@ -127,20 +127,20 @@ public class SharePointSearchTool
                 MaxResults = Math.Min(maxResults, 500)
             };
 
-            var searchResponse = await _sharePointSearchService.SearchCoffeeNetSitesAsync(searchRequest, userToken);
+            var searchResponse = await _sharePointSearchService.SearchSharePointSitesAsync(searchRequest, userToken);
 
             return FormatSearchResults(searchResponse);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error searching CoffeeNet sites by keyword");
-            return $"Error searching CoffeeNet sites by keyword: {ex.Message}";
+            _logger.LogError(ex, "Error searching SharePoint sites by keyword");
+            return $"Error searching SharePoint sites by keyword: {ex.Message}";
         }
     }
 
     [McpServerTool]
-    [Description("Advanced search for CoffeeNet (CN365) sites in SharePoint with intelligent parsing of user intent including time periods, keywords, sorting, and search scope options.")]
-    public async Task<string> SearchCoffeeNetSitesAdvanced(
+    [Description("Advanced search for SharePoint sites with intelligent parsing of user intent including time periods, keywords, sorting, and search scope options.")]
+    public async Task<string> SearchSharePointSitesAdvanced(
         [Description("User access token for authentication")] string userToken,
         [Description("Natural language search query that will be intelligently parsed for time periods and keywords")] string query = null,
         [Description("Specific time period: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year', or patterns like 'last_7_days'")] string timePeriod = null,
@@ -158,7 +158,7 @@ public class SharePointSearchTool
                 return "Error: User token is required for authentication.";
             }
 
-            _logger.LogInformation("Advanced CoffeeNet search - Query: {Query}, TimePeriod: {TimePeriod}, Keywords: {Keywords}, Scope: {SearchScope}, Sort: {SortBy} {SortOrder}",
+            _logger.LogInformation("Advanced SharePoint search - Query: {Query}, TimePeriod: {TimePeriod}, Keywords: {Keywords}, Scope: {SearchScope}, Sort: {SortBy} {SortOrder}",
                 query, timePeriod, string.Join(",", keywords ?? new List<string>()), searchScope, sortBy, sortOrder);
 
             // Validate and constrain max results
@@ -177,17 +177,69 @@ public class SharePointSearchTool
                 MaxResults = maxResults
             };
 
-            var searchResponse = await _sharePointSearchService.SearchCoffeeNetSitesAsync(searchRequest, userToken);
+            var searchResponse = await _sharePointSearchService.SearchSharePointSitesAsync(searchRequest, userToken);
 
             var result = FormatSearchResults(searchResponse);
 
-            _logger.LogInformation("Advanced CoffeeNet search completed successfully. Found {Count} sites.", searchResponse.Sites.Count);
+            _logger.LogInformation("Advanced SharePoint search completed successfully. Found {Count} sites.", searchResponse.Sites.Count);
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in advanced CoffeeNet search");
+            _logger.LogError(ex, "Error in advanced SharePoint search");
             return $"Error in advanced search: {ex.Message}";
+        }
+    }
+
+    [McpServerTool]
+    [Description("Check the status of the MCP server and SharePoint connectivity")]
+    public async Task<string> CheckMcpServerStatus(
+        [Description("User access token for authentication (optional for basic status)")] string userToken = null)
+    {
+        try
+        {
+            var status = new
+            {
+                McpServerStatus = "Running",
+                SharePointConnectivity = "Unknown",
+                Timestamp = DateTime.UtcNow,
+                AvailableFunctions = new[]
+                {
+                    "SearchSharePointSites - Search for SharePoint sites using various filters",
+                    "SearchRecentSharePointSites - Find recently created SharePoint sites", 
+                    "FindSharePointSitesByKeyword - Search SharePoint sites by keywords",
+                    "SearchSharePointSitesAdvanced - Advanced SharePoint site search with filters",
+                    "CheckMcpServerStatus - Check server status"
+                }
+            };
+
+            if (!string.IsNullOrEmpty(userToken))
+            {
+                try
+                {
+                    // Test connectivity by trying to get tenant info
+                    var tenantInfo = await _sharePointSearchService.GetTenantInfoFromGraphAsync(userToken);
+                    status = status with { SharePointConnectivity = "Connected" };
+                }
+                catch (Exception ex)
+                {
+                    status = status with { SharePointConnectivity = $"Failed: {ex.Message}" };
+                }
+            }
+
+            _logger.LogInformation("MCP Server status check completed. SharePoint connectivity: {Connectivity}", 
+                status.SharePointConnectivity);
+
+            return System.Text.Json.JsonSerializer.Serialize(status, new JsonSerializerOptions 
+            { 
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking MCP server status");
+            return $"Error checking server status: {ex.Message}";
         }
     }
 
@@ -195,7 +247,7 @@ public class SharePointSearchTool
     {
         if (!response.Sites.Any())
         {
-            return "No CoffeeNet sites found matching the search criteria.";
+            return "No SharePoint sites found matching the search criteria.";
         }
 
         // Format as JSON cards for the frontend

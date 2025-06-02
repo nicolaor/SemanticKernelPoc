@@ -8,7 +8,8 @@ namespace SemanticKernelPoc.McpServer.Services;
 
 public interface ISharePointSearchService
 {
-    Task<SharePointSearchResponse> SearchCoffeeNetSitesAsync(SharePointSearchRequest request, string userToken);
+    Task<SharePointSearchResponse> SearchSharePointSitesAsync(SharePointSearchRequest request, string userToken);
+    Task<TenantInfo> GetTenantInfoFromGraphAsync(string userToken);
 }
 
 public class TenantInfo
@@ -41,15 +42,37 @@ public class SharePointSearchService : ISharePointSearchService
             .Build();
     }
 
-    public async Task<SharePointSearchResponse> SearchCoffeeNetSitesAsync(SharePointSearchRequest request, string userToken)
+    public async Task<SharePointSearchResponse> SearchSharePointSitesAsync(SharePointSearchRequest request, string userToken)
     {
         try
         {
-            // Get tenant information using Graph API instead of token parsing
-            var tenantInfo = await GetTenantInfoFromGraphAsync(userToken);
+            _logger.LogInformation("🔍 Starting SharePoint sites search for query: {Query}", request.Query);
+            _logger.LogInformation("📋 Received user token length: {TokenLength} characters", userToken?.Length ?? 0);
+            
+            // Validate the incoming token
+            if (string.IsNullOrWhiteSpace(userToken))
+            {
+                throw new ArgumentException("User token is null or empty", nameof(userToken));
+            }
 
+            // Log token details (first/last chars only for security)
+            var tokenStart = userToken.Length > 10 ? userToken.Substring(0, 10) : userToken;
+            var tokenEnd = userToken.Length > 10 ? userToken.Substring(userToken.Length - 10) : "";
+            _logger.LogInformation("🔑 Token validation - starts with: {TokenStart}..., ends with: ...{TokenEnd}", tokenStart, tokenEnd);
+            
+            // Get tenant information using Graph API instead of token parsing
+            _logger.LogInformation("🏢 Step 1: Getting tenant information from Graph API...");
+            var tenantInfo = await GetTenantInfoFromGraphAsync(userToken);
+            _logger.LogInformation("✅ Step 1 completed: Tenant ID: {TenantId}, SharePoint URL: {SharePointUrl}", 
+                tenantInfo.TenantId, tenantInfo.SharePointRootUrl);
+
+            _logger.LogInformation("🔐 Step 2: Acquiring SharePoint access token...");
             var sharePointAccessToken = await GetSharePointTokenAsync(userToken, tenantInfo);
+            _logger.LogInformation("✅ Step 2 completed: SharePoint token acquired (length: {TokenLength})", sharePointAccessToken?.Length ?? 0);
+
+            _logger.LogInformation("🔍 Step 3: Executing SharePoint search...");
             var searchResults = await ExecuteSearchAsync(sharePointAccessToken, request, tenantInfo);
+            _logger.LogInformation("✅ Step 3 completed: Search executed successfully");
 
             var response = ParseSearchResults(searchResults);
             
@@ -57,11 +80,13 @@ public class SharePointSearchService : ISharePointSearchService
             response.SearchQuery = BuildSearchQuery(request);
             response.QueryExplanation = GenerateQueryExplanation(request);
             
+            _logger.LogInformation("✅ SharePoint sites search completed successfully. Found {Count} sites.", (int)(response.Sites?.Count ?? 0));
             return response;
         }
         catch (Microsoft.Identity.Client.MsalUiRequiredException ex)
         {
-            _logger.LogWarning(ex, "SharePoint search requires additional user consent for SharePoint access");
+            _logger.LogWarning(ex, "❌ SharePoint search requires additional user consent - Error Code: {ErrorCode}, Claims: {Claims}", 
+                ex.ErrorCode, ex.Claims);
             
             // Return a user-friendly error response
             var errorResponse = new SharePointSearchResponse();
@@ -69,18 +94,19 @@ public class SharePointSearchService : ISharePointSearchService
             errorResponse.QueryExplanation = "SharePoint access requires additional permissions. Please sign out and sign back in to grant SharePoint access permissions.";
             
             throw new UnauthorizedAccessException(
-                "SharePoint search requires additional permissions. The user needs to sign out and sign back in with SharePoint access permissions. " +
+                $"SharePoint search requires additional permissions. Error: {ex.ErrorCode}. " +
+                "The user needs to sign out and sign back in with SharePoint access permissions. " +
                 "Required scopes: Sites.Read.All, Sites.Search.All"
             );
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error searching CoffeeNet sites");
-            throw new InvalidOperationException($"Error searching CoffeeNet sites: {ex.Message}", ex);
+            _logger.LogError(ex, "❌ Error searching SharePoint sites - Exception Type: {ExceptionType}", ex.GetType().Name);
+            throw new InvalidOperationException($"Error searching SharePoint sites: {ex.Message}", ex);
         }
     }
 
-    private async Task<TenantInfo> GetTenantInfoFromGraphAsync(string userToken)
+    public async Task<TenantInfo> GetTenantInfoFromGraphAsync(string userToken)
     {
         try
         {
@@ -112,23 +138,41 @@ public class SharePointSearchService : ISharePointSearchService
     {
         try
         {
+            _logger.LogInformation("🔄 Acquiring Graph API token using On-Behalf-Of flow...");
+            
             // Define the scopes we need for Graph API
             var scopes = new[] { "https://graph.microsoft.com/.default" };
+            _logger.LogInformation("📋 Requested scopes: {Scopes}", string.Join(", ", scopes));
 
             // Create UserAssertion from the incoming token
             var userAssertion = new UserAssertion(userToken);
+            _logger.LogInformation("🔑 Created UserAssertion for token exchange");
 
             // Use On-Behalf-Of flow to get Graph token
             var result = await _clientApp
                 .AcquireTokenOnBehalfOf(scopes, userAssertion)
                 .ExecuteAsync();
 
-            _logger.LogInformation("Successfully acquired Graph API token using On-Behalf-Of flow");
+            _logger.LogInformation("✅ Successfully acquired Graph API token - Length: {TokenLength}, Expires: {ExpiresOn}, Source: {Source}", 
+                result.AccessToken?.Length ?? 0, result.ExpiresOn, result.AuthenticationResultMetadata?.TokenSource);
+            
             return result.AccessToken;
+        }
+        catch (Microsoft.Identity.Client.MsalUiRequiredException ex)
+        {
+            _logger.LogError(ex, "❌ Graph token acquisition requires UI interaction - Error Code: {ErrorCode}, Claims: {Claims}", 
+                ex.ErrorCode, ex.Claims);
+            throw;
+        }
+        catch (Microsoft.Identity.Client.MsalServiceException ex)
+        {
+            _logger.LogError(ex, "❌ MSAL service error during Graph token acquisition - Error Code: {ErrorCode}, Correlation ID: {CorrelationId}", 
+                ex.ErrorCode, ex.CorrelationId);
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to acquire Graph API token using On-Behalf-Of flow");
+            _logger.LogError(ex, "❌ Failed to acquire Graph API token - Exception Type: {ExceptionType}", ex.GetType().Name);
             throw;
         }
     }
@@ -137,15 +181,25 @@ public class SharePointSearchService : ISharePointSearchService
     {
         try
         {
+            _logger.LogInformation("🏢 Calling Graph API to get organization information...");
+            
             // Call Graph API to get organization information
             var request = new HttpRequestMessage(HttpMethod.Get, "https://graph.microsoft.com/v1.0/organization");
             request.Headers.Add("Authorization", $"Bearer {graphToken}");
             request.Headers.Add("Accept", "application/json");
 
+            _logger.LogInformation("📤 Sending request to Graph API organization endpoint");
             var response = await _httpClient.SendAsync(request);
             var content = await response.Content.ReadAsStringAsync();
 
-            _logger.LogInformation("Graph API organization response: {Content}", content);
+            _logger.LogInformation("📥 Graph API organization response - Status: {StatusCode}, Content Length: {ContentLength}", 
+                response.StatusCode, content?.Length ?? 0);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("❌ Graph API organization call failed - Status: {StatusCode}, Content: {Content}", 
+                    response.StatusCode, content);
+            }
 
             response.EnsureSuccessStatusCode();
 
@@ -159,11 +213,13 @@ public class SharePointSearchService : ISharePointSearchService
 
             var org = organizations.First();
             var tenantId = org.GetProperty("id").GetString();
+            _logger.LogInformation("🆔 Found tenant ID: {TenantId}", tenantId);
 
             // Try to get SharePoint root URL from various properties
             string sharePointRootUrl = "";
 
             // Method 1: Try to get from verifiedDomains (look for the primary domain)
+            _logger.LogInformation("🔍 Attempting to extract SharePoint URL from verified domains...");
             if (org.TryGetProperty("verifiedDomains", out var verifiedDomains))
             {
                 foreach (var domain in verifiedDomains.EnumerateArray())
@@ -171,11 +227,14 @@ public class SharePointSearchService : ISharePointSearchService
                     if (domain.TryGetProperty("isDefault", out var isDefault) && isDefault.GetBoolean())
                     {
                         var domainName = domain.GetProperty("name").GetString();
+                        _logger.LogInformation("🌐 Found default domain: {DomainName}", domainName);
+                        
                         if (domainName.EndsWith(".onmicrosoft.com"))
                         {
                             // Extract tenant name from *.onmicrosoft.com
                             var tenantName = domainName.Replace(".onmicrosoft.com", "");
                             sharePointRootUrl = $"https://{tenantName}.sharepoint.com";
+                            _logger.LogInformation("✅ Constructed SharePoint URL from domain: {SharePointUrl}", sharePointRootUrl);
                             break;
                         }
                     }
@@ -185,19 +244,29 @@ public class SharePointSearchService : ISharePointSearchService
             // Method 2: If we couldn't find it from domains, make a direct call to get SharePoint admin URL
             if (string.IsNullOrEmpty(sharePointRootUrl))
             {
+                _logger.LogInformation("🔄 Attempting to get SharePoint URL from root site API...");
                 sharePointRootUrl = await GetSharePointRootUrlFromSPOServiceAsync(graphToken);
+                
+                if (!string.IsNullOrEmpty(sharePointRootUrl))
+                {
+                    _logger.LogInformation("✅ Retrieved SharePoint URL from root site: {SharePointUrl}", sharePointRootUrl);
+                }
             }
 
             if (string.IsNullOrEmpty(sharePointRootUrl))
             {
+                _logger.LogError("❌ Could not determine SharePoint root URL from any method");
                 throw new InvalidOperationException("Could not determine SharePoint root URL from Graph API");
             }
+
+            _logger.LogInformation("✅ Organization info retrieved successfully - Tenant: {TenantId}, SharePoint: {SharePointUrl}", 
+                tenantId, sharePointRootUrl);
 
             return (tenantId, sharePointRootUrl);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get organization information from Graph API");
+            _logger.LogError(ex, "❌ Failed to get organization information from Graph API - Exception Type: {ExceptionType}", ex.GetType().Name);
             throw;
         }
     }
@@ -239,30 +308,53 @@ public class SharePointSearchService : ISharePointSearchService
     {
         try
         {
+            _logger.LogInformation("🔄 Acquiring SharePoint access token for tenant: {TenantId}", tenantInfo.TenantId);
+            
             // Extract the SharePoint host from the root URL
             var uri = new Uri(tenantInfo.SharePointRootUrl);
+            _logger.LogInformation("🌐 SharePoint URI: {SharePointUri}", uri.ToString());
             
             // Use the original working scope format for SharePoint REST API
             var scopes = new[] { $"{uri.Scheme}://{uri.Host}/.default" };
+            _logger.LogInformation("📋 Requested SharePoint scopes: {Scopes}", string.Join(", ", scopes));
 
             // Create UserAssertion from the incoming token
             var userAssertion = new UserAssertion(userToken);
+            _logger.LogInformation("🔑 Created UserAssertion for SharePoint token exchange");
 
             // Use On-Behalf-Of flow to get SharePoint token
+            _logger.LogInformation("🔄 Executing OBO flow for SharePoint...");
             var result = await _clientApp.AcquireTokenOnBehalfOf(scopes, userAssertion)
                 .ExecuteAsync();
 
+            _logger.LogInformation("✅ Successfully acquired SharePoint token - Length: {TokenLength}, Expires: {ExpiresOn}, Source: {Source}", 
+                result.AccessToken?.Length ?? 0, result.ExpiresOn, result.AuthenticationResultMetadata?.TokenSource);
+
             return result.AccessToken;
         }
-        catch (MsalUiRequiredException ex)
+        catch (Microsoft.Identity.Client.MsalUiRequiredException ex)
         {
-            _logger.LogError(ex, "SharePoint authentication requires additional consent. User needs to re-authenticate with SharePoint permissions.");
+            _logger.LogError(ex, "❌ SharePoint token acquisition requires UI interaction - Error Code: {ErrorCode}, Claims: {Claims}", 
+                ex.ErrorCode, ex.Claims);
+            
+            _logger.LogError("💡 Suggested resolution: User needs to consent to SharePoint permissions. Required scopes: {RequiredScopes}", 
+                $"{new Uri(tenantInfo.SharePointRootUrl).Scheme}://{new Uri(tenantInfo.SharePointRootUrl).Host}/.default");
+            
             throw new UnauthorizedAccessException(
-                "SharePoint access requires additional permissions. Please sign out and sign back in to grant SharePoint access.", ex);
+                $"SharePoint access requires additional permissions. Please ensure the Azure AD application has been granted the following permissions and admin consent has been provided: " +
+                $"Sites.Read.All, Sites.Search.All, AllSites.Read. " +
+                $"Required scope: {new Uri(tenantInfo.SharePointRootUrl).Scheme}://{new Uri(tenantInfo.SharePointRootUrl).Host}/.default. " +
+                $"Error: {ex.ErrorCode} - {ex.Message}", ex);
+        }
+        catch (Microsoft.Identity.Client.MsalServiceException ex)
+        {
+            _logger.LogError(ex, "❌ MSAL service error during SharePoint token acquisition - Error Code: {ErrorCode}, Correlation ID: {CorrelationId}, Response: {Response}", 
+                ex.ErrorCode, ex.CorrelationId, ex.ResponseBody);
+            throw new UnauthorizedAccessException("Failed to access SharePoint due to service error. Please try signing in again.", ex);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to acquire SharePoint access token");
+            _logger.LogError(ex, "❌ Failed to acquire SharePoint access token - Exception Type: {ExceptionType}", ex.GetType().Name);
             throw new UnauthorizedAccessException("Failed to access SharePoint. Please try signing in again.", ex);
         }
     }

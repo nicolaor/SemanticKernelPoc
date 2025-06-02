@@ -92,33 +92,17 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
             {
                 if (analysisMode)
                 {
-                    // For analysis mode, return full content without truncation and no technical IDs
-                    var analysisData = messages.Value.Select(msg => new
-                    {
-                        subject = msg.Subject ?? "No Subject",
-                        from = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
-                        fromEmail = msg.From?.EmailAddress?.Address ?? "",
-                        receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
-                        receivedDateTime = msg.ReceivedDateTime,
-                        isRead = msg.IsRead ?? false,
-                        importance = msg.Importance?.ToString() ?? "Normal",
-                        preview = msg.BodyPreview ?? "",
-                        fullContent = msg.Body?.Content ?? msg.BodyPreview ?? "",
-                        matchReason = !string.IsNullOrWhiteSpace(timePeriod) ? "TimePeriod" : 
-                                     !string.IsNullOrWhiteSpace(readStatus) ? "ReadStatus" : 
-                                     !string.IsNullOrWhiteSpace(importance) ? "Importance" : "Search"
-                    }).ToList();
-
-                    var filterDescription = BuildFilterDescription(timePeriod, readStatus, importance);
-                    var analysisResult = $"EMAIL_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
-                    _logger.LogInformation("=== MAIL PLUGIN RETURNING ANALYSIS ===");
-                    _logger.LogInformation("Analysis result: {Result}", analysisResult);
-                    _logger.LogInformation("=== MAIL PLUGIN ANALYSIS END ===");
-                    return analysisResult;
+                    // For analysis mode, return clean summary without prefixes
+                    var completedCount = messages.Value.Count(m => m.IsRead ?? false);
+                    var highImportanceCount = messages.Value.Count(m => m.Importance?.ToString()?.ToLower() == "high");
+                    
+                    return $"Found {messages.Value.Count} emails for {userName}. " +
+                           $"{completedCount} read, {highImportanceCount} high importance. " +
+                           $"Recent emails from: {string.Join(", ", messages.Value.Take(3).Select(m => m.From?.EmailAddress?.Name ?? "Unknown"))}.";
                 }
                 else
                 {
-                    // Create email cards similar to task cards
+                    // Create email cards for the new approach
                     var emailCards = messages.Value.Select((msg, index) => new
                     {
                         id = $"email_{index}_{msg.Id?.GetHashCode().ToString("X")}",
@@ -142,13 +126,14 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                         readStatusColor = (msg.IsRead ?? false) ? "#10b981" : "#f59e0b"
                     }).ToList();
 
+                    // Store structured data in kernel data for the system to process
+                    kernel.Data["EmailCards"] = emailCards;
+                    kernel.Data["HasStructuredData"] = "true";
+                    kernel.Data["StructuredDataType"] = "emails";
+                    kernel.Data["StructuredDataCount"] = emailCards.Count;
+
                     var filterDescription = BuildFilterDescription(timePeriod, readStatus, importance);
-                    var cardResult = $"EMAIL_CARDS: {JsonSerializer.Serialize(emailCards, new JsonSerializerOptions { WriteIndented = false })}";
-                    _logger.LogInformation("=== MAIL PLUGIN RETURNING CARDS ===");
-                    _logger.LogInformation("Number of email cards: {Count}", emailCards.Count);
-                    _logger.LogInformation("Card result: {Result}", cardResult);
-                    _logger.LogInformation("=== MAIL PLUGIN CARDS END ===");
-                    return cardResult;
+                    return $"Found {emailCards.Count} recent emails for {userName}.";
                 }
             }
 
@@ -468,24 +453,13 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
             {
                 if (analysisMode)
                 {
-                    // For analysis mode, return full content without truncation and no technical IDs
-                    var analysisData = messages.Value.Select(msg => new
-                    {
-                        subject = msg.Subject ?? "No Subject",
-                        from = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
-                        fromEmail = msg.From?.EmailAddress?.Address ?? "",
-                        receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
-                        receivedDateTime = msg.ReceivedDateTime,
-                        isRead = msg.IsRead ?? false,
-                        importance = msg.Importance?.ToString() ?? "Normal",
-                        preview = msg.BodyPreview ?? "",
-                        fullContent = msg.Body?.Content ?? msg.BodyPreview ?? "",
-                        matchReason = !string.IsNullOrWhiteSpace(searchQuery) ? "Content/Subject" : 
-                                     !string.IsNullOrWhiteSpace(fromSender) ? "Sender" : 
-                                     !string.IsNullOrWhiteSpace(subjectContains) ? "Subject" : "Search"
-                    }).ToList();
-
-                    return $"EMAIL_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
+                    // For analysis mode, return clean summary
+                    var unreadCount = messages.Value.Count(m => !(m.IsRead ?? false));
+                    var highImportanceCount = messages.Value.Count(m => m.Importance?.ToString()?.ToLower() == "high");
+                    
+                    return $"Found {messages.Value.Count} emails matching '{searchQuery}' for {userName}. " +
+                           $"{unreadCount} unread, {highImportanceCount} high importance. " +
+                           $"Top matches from: {string.Join(", ", messages.Value.Take(3).Select(m => m.From?.EmailAddress?.Name ?? "Unknown"))}.";
                 }
                 else
                 {
@@ -515,7 +489,13 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                         readStatusColor = (msg.IsRead ?? false) ? "#10b981" : "#f59e0b"
                     }).ToList();
 
-                    return $"EMAIL_CARDS: {JsonSerializer.Serialize(emailCards, new JsonSerializerOptions { WriteIndented = false })}";
+                    // Store structured data in kernel data for the system to process
+                    kernel.Data["EmailCards"] = emailCards;
+                    kernel.Data["HasStructuredData"] = "true";
+                    kernel.Data["StructuredDataType"] = "emails";
+                    kernel.Data["StructuredDataCount"] = emailCards.Count;
+
+                    return $"Found {emailCards.Count} emails matching '{searchQuery}' for {userName}.";
                 }
             }
 
@@ -802,7 +782,13 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                     readStatusColor = (msg.IsRead ?? false) ? "#10b981" : "#f59e0b"
                 }).ToList();
 
-                return $"EMAIL_CARDS: {JsonSerializer.Serialize(emailCards, new JsonSerializerOptions { WriteIndented = false })}";
+                // Store structured data in kernel data for the system to process
+                kernel.Data["EmailCards"] = emailCards;
+                kernel.Data["HasStructuredData"] = "true";
+                kernel.Data["StructuredDataType"] = "emails";
+                kernel.Data["StructuredDataCount"] = emailCards.Count;
+
+                return $"Found {emailCards.Count} emails from '{senderEmailOrName}' for {userName}.";
             }
 
             var filterDesc = BuildFilterDescription(timePeriod, unreadOnly ? "unread" : null, null);

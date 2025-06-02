@@ -121,79 +121,110 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
         [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
         try
         {
             var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
             var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
 
-            _logger.LogInformation("⏱️ GetRecentNotes started for user {UserName} with count={Count}, includeCompleted={IncludeCompleted}, listName={ListName}, timePeriod={TimePeriod}, completionStatus={CompletionStatus}",
-                userName, count, includeCompleted, listName, timePeriod, completionStatus);
+            _logger.LogInformation("🎯 GetRecentNotes started for user {UserName} with parameters: count={Count}, includeCompleted={IncludeCompleted}, timePeriod={TimePeriod}, analysisMode={AnalysisMode}",
+                userName, count, includeCompleted, timePeriod, analysisMode);
 
             if (string.IsNullOrEmpty(userAccessToken))
             {
-                return "Unable to retrieve tasks - user authentication required.";
+                _logger.LogError("❌ No access token available for user {UserName}", userName);
+                return $"Unable to retrieve tasks for {userName} - authentication required.";
             }
-
-            _logger.LogInformation("⏱️ GetRecentNotes: Creating Graph client for user {UserName} at {ElapsedMs}ms", userName, stopwatch.ElapsedMilliseconds);
-            var graphClient = await CreateClientAsync(userAccessToken);
-            _logger.LogInformation("⏱️ GetRecentNotes: Graph client created in {ElapsedMs}ms (total: {TotalMs}ms)",
-                stopwatch.ElapsedMilliseconds, stopwatch.ElapsedMilliseconds);
 
             var allTasks = new List<(TodoTask Task, string ListName)>();
 
-            if (!string.IsNullOrEmpty(listName))
+            using (var graphClient = await CreateClientAsync(userAccessToken))
             {
-                // Search specific list
                 try
                 {
-                    var taskList = await GetTaskList(graphClient, listName);
-                    if (taskList?.Id != null)
+                    _logger.LogInformation("🔍 Starting task list retrieval for user {UserName}", userName);
+
+                    var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
+
+                    if (taskLists?.Value?.Any() == true)
                     {
-                        var tasks = await GetTasksFromList(graphClient, taskList.Id, includeCompleted);
-                        allTasks.AddRange(tasks.Select(t => (t, taskList.DisplayName ?? listName)));
+                        foreach (var list in taskLists.Value)
+                        {
+                            _logger.LogInformation("📋 Processing task list: '{ListName}' (ID: {ListId})", list.DisplayName, list.Id);
+
+                            // If a specific list name is provided, only process that list
+                            if (!string.IsNullOrWhiteSpace(listName) && 
+                                !list.DisplayName?.Contains(listName, StringComparison.OrdinalIgnoreCase) == true)
+                            {
+                                _logger.LogInformation("⏭️ Skipping list '{ListName}' - doesn't match filter '{FilterName}'", list.DisplayName, listName);
+                                continue;
+                            }
+
+                            try
+                            {
+                                var listProcessingStartTime = stopwatch.ElapsedMilliseconds;
+                                
+                                // Get tasks from this list with proper pagination to avoid performance issues
+                                var tasks = await GetTasksFromList(graphClient, list.Id, includeCompleted);
+                                allTasks.AddRange(tasks.Select(t => (t, list.DisplayName ?? "Unknown")));
+
+                                _logger.LogInformation("✅ List '{ListName}' processed in {ElapsedMs}ms - found {TaskCount} tasks (total: {TotalMs}ms)",
+                                    list.DisplayName, stopwatch.ElapsedMilliseconds - listProcessingStartTime, tasks.Count, stopwatch.ElapsedMilliseconds);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "❌ ERROR ACCESSING TASKS from list '{ListName}' (ID: {ListId})", list.DisplayName, list.Id);
+                                _logger.LogError("   🔍 Exception Type: {ExceptionType}", ex.GetType().Name);
+                                _logger.LogError("   📝 Exception Message: {Message}", ex.Message);
+                                
+                                if (ex.Message.Contains("Forbidden") || ex.Message.Contains("Unauthorized"))
+                                {
+                                    _logger.LogError("   🚫 Access denied to list '{ListName}' - skipping", list.DisplayName);
+                                    continue; // Skip this list but continue with others
+                                }
+                                throw; // Re-throw for other errors
+                            }
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("⚠️ No task lists found for user {UserName}", userName);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Could not find task list '{ListName}' for user {UserName}", listName, userName);
-                    return $"Task list '{listName}' not found for {userName}.";
-                }
-            }
-            else
-            {
-                // Get all lists
-                var listFetchStartTime = stopwatch.ElapsedMilliseconds;
-                _logger.LogInformation("⏱️ GetRecentNotes: Fetching all task lists for user {UserName} at {ElapsedMs}ms", userName, stopwatch.ElapsedMilliseconds);
-                var taskLists = await graphClient.Me.Todo.Lists.GetAsync();
-                _logger.LogInformation("⏱️ GetRecentNotes: Task lists retrieved in {ElapsedMs}ms (total: {TotalMs}ms) - found {ListCount} lists",
-                    stopwatch.ElapsedMilliseconds - listFetchStartTime, stopwatch.ElapsedMilliseconds, taskLists?.Value?.Count ?? 0);
-
-                if (taskLists?.Value?.Any() == true)
-                {
-                    foreach (var list in taskLists.Value)
+                    _logger.LogError(ex, "❌ CRITICAL ERROR: Failed to retrieve task lists for user {UserName}", userName);
+                    _logger.LogError("   🔍 Exception Type: {ExceptionType}", ex.GetType().Name);
+                    _logger.LogError("   📝 Exception Message: {Message}", ex.Message);
+                    
+                    if (ex.InnerException != null)
                     {
-                        if (list.Id != null)
-                        {
-                            var listProcessingStartTime = stopwatch.ElapsedMilliseconds;
-                            _logger.LogInformation("⏱️ GetRecentNotes: Processing list '{ListName}' (ID: {ListId}) for user {UserName} at {ElapsedMs}ms",
-                                list.DisplayName, list.Id, userName, stopwatch.ElapsedMilliseconds);
-
-                            var tasks = await GetTasksFromList(graphClient, list.Id, includeCompleted);
-                            allTasks.AddRange(tasks.Select(t => (t, list.DisplayName ?? "Unknown")));
-
-                            _logger.LogInformation("⏱️ GetRecentNotes: List '{ListName}' tasks retrieved in {ElapsedMs}ms - found {TaskCount} tasks (total: {TotalMs}ms)",
-                                list.DisplayName, stopwatch.ElapsedMilliseconds - listProcessingStartTime, tasks.Count, stopwatch.ElapsedMilliseconds);
-                        }
+                        _logger.LogError("   🔗 Inner Exception: {InnerType} - {InnerMessage}", 
+                            ex.InnerException.GetType().Name, ex.InnerException.Message);
                     }
+                    
+                    if (ex.Message.Contains("Forbidden") || ex.Message.Contains("Unauthorized") || 
+                        ex.Message.Contains("insufficient privileges") || ex.Message.Contains("Access denied"))
+                    {
+                        return $"❌ Authentication Error: Access denied to Microsoft To Do. Please ensure you have the necessary permissions and try signing in again.";
+                    }
+                    
+                    if (ex.Message.Contains("MsalUiRequiredException") || ex.Message.Contains("additional consent"))
+                    {
+                        return $"❌ Authentication Error: Additional consent required for Microsoft To Do access. Please sign out and sign back in.";
+                    }
+                    
+                    return $"❌ Error: Failed to retrieve task lists for {userName}. {ex.Message}";
                 }
             }
 
-            _logger.LogInformation("⏱️ GetRecentNotes: Total tasks found across all lists: {TaskCount} for user {UserName} at {ElapsedMs}ms",
+            _logger.LogInformation("✅ GetRecentNotes: Total tasks found across all lists: {TaskCount} for user {UserName} at {ElapsedMs}ms",
                 allTasks.Count, userName, stopwatch.ElapsedMilliseconds);
 
             if (!allTasks.Any())
             {
-                return $"No {(includeCompleted ? "" : "incomplete ")}tasks found for {userName}.";
+                _logger.LogInformation("ℹ️ No tasks found for user {UserName} with current filters", userName);
+                return $"📝 No {(includeCompleted ? "" : "incomplete ")}tasks found for {userName}.";
             }
 
             // Sort by creation time (most recent first) and take the requested count (max 10 for performance)
@@ -233,84 +264,66 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
                 }).ToList();
             }
 
-            _logger.LogInformation("⏱️ GetRecentNotes: Task processing and filtering completed in {ElapsedMs}ms - {TaskCount} tasks after filtering (total: {TotalMs}ms)",
+            _logger.LogInformation("✅ GetRecentNotes: Task processing and filtering completed in {ElapsedMs}ms - {TaskCount} tasks after filtering (total: {TotalMs}ms)",
                 stopwatch.ElapsedMilliseconds - processingStartTime, recentTasks.Count, stopwatch.ElapsedMilliseconds);
 
-            // Create task cards similar to calendar cards
+            // Create structured task data and store it in kernel data for processing
             var cardCreationStartTime = stopwatch.ElapsedMilliseconds;
             
+            var taskCards = recentTasks.Select((t, index) => new
+            {
+                id = $"task_{index}_{t.Task.Id?.GetHashCode().ToString("X")}",
+                title = t.Task.Title ?? "Untitled Task",
+                content = t.Task.Body?.Content?.Length > 100 ?
+                    t.Task.Body.Content[..100] + "..." :
+                    t.Task.Body?.Content ?? "",
+                status = t.Task.Status?.ToString() ?? "NotStarted",
+                priority = t.Task.Importance?.ToString() ?? "Normal",
+                dueDate = t.Task.DueDateTime?.DateTime,
+                dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
+                    DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
+                created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
+                isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
+                webLink = $"https://to-do.office.com/tasks/{t.Task.Id}/details",
+                priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
+                {
+                    "high" => "#ef4444",
+                    "low" => "#10b981",
+                    _ => "#6b7280"
+                },
+                statusColor = t.Task.Status?.ToString()?.ToLower() switch
+                {
+                    "completed" => "#10b981",
+                    "inprogress" => "#f59e0b",
+                    "waitingonothers" => "#8b5cf6",
+                    "deferred" => "#6b7280",
+                    _ => "#3b82f6"
+                }
+            }).ToList();
+
+            // Store structured data in kernel data for the system to process
+            kernel.Data["TaskCards"] = taskCards;
+            kernel.Data["HasStructuredData"] = "true";
+            kernel.Data["StructuredDataType"] = "tasks";
+            kernel.Data["StructuredDataCount"] = taskCards.Count;
+
+            _logger.LogInformation("⏱️ GetRecentNotes: Card creation completed in {ElapsedMs}ms (total: {TotalMs}ms)",
+                stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("⏱️ GetRecentNotes: TOTAL FUNCTION TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
+
+            // Return clean, natural language response without prefixes
             if (analysisMode)
             {
-                // For analysis mode, return full content without truncation and no technical IDs
-                var analysisData = recentTasks.Select(t => new
-                {
-                    title = t.Task.Title ?? "Untitled Task",
-                    content = t.Task.Body?.Content ?? "",
-                    status = t.Task.Status?.ToString() ?? "NotStarted",
-                    priority = t.Task.Importance?.ToString() ?? "Normal",
-                    dueDate = t.Task.DueDateTime?.DateTime,
-                    dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
-                        DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
-                    created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
-                    isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
-                    listName = t.ListName
-                }).ToList();
-
-                if (!analysisData.Any())
-                {
-                    return $"No tasks match your criteria for {userName}.";
-                }
-
-                var result = $"TASK_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
-                _logger.LogInformation("⏱️ GetRecentNotes: Analysis data creation completed in {ElapsedMs}ms (total: {TotalMs}ms)",
-                    stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
-                return result;
+                var completedCount = taskCards.Count(t => t.isCompleted);
+                var highPriorityCount = taskCards.Count(t => t.priority?.ToLower() == "high");
+                
+                return $"Found {taskCards.Count} tasks for {userName}. " +
+                       $"{completedCount} completed, {highPriorityCount} high priority. " +
+                       $"Most recent tasks cover: {string.Join(", ", taskCards.Take(3).Select(t => t.title))}.";
             }
             else
             {
-                // For card mode, return truncated content with UI-friendly data
-                var taskCards = recentTasks.Select((t, index) => new
-                {
-                    id = $"task_{index}_{t.Task.Id?.GetHashCode().ToString("X")}",
-                    title = t.Task.Title ?? "Untitled Task",
-                    content = t.Task.Body?.Content?.Length > 100 ?
-                        t.Task.Body.Content[..100] + "..." :
-                        t.Task.Body?.Content ?? "",
-                    status = t.Task.Status?.ToString() ?? "NotStarted",
-                    priority = t.Task.Importance?.ToString() ?? "Normal",
-                    dueDate = t.Task.DueDateTime?.DateTime,
-                    dueDateFormatted = t.Task.DueDateTime?.DateTime != null ?
-                        DateTime.Parse(t.Task.DueDateTime.DateTime).ToString("MMM dd, yyyy") : null,
-                    created = t.Task.CreatedDateTime?.ToString("MMM dd, yyyy") ?? "Unknown",
-                    isCompleted = t.Task.Status?.ToString()?.ToLower() == "completed",
-                    webLink = $"https://to-do.office.com/tasks/{t.Task.Id}/details",
-                    priorityColor = t.Task.Importance?.ToString()?.ToLower() switch
-                    {
-                        "high" => "#ef4444",
-                        "low" => "#10b981",
-                        _ => "#6b7280"
-                    },
-                    statusColor = t.Task.Status?.ToString()?.ToLower() switch
-                    {
-                        "completed" => "#10b981",
-                        "inprogress" => "#f59e0b",
-                        "waitingonothers" => "#8b5cf6",
-                        "deferred" => "#6b7280",
-                        _ => "#3b82f6"
-                    }
-                }).ToList();
-
-                if (!taskCards.Any())
-                {
-                    return $"No tasks match your criteria for {userName}.";
-                }
-
-                var result = $"TASK_CARDS: {JsonSerializer.Serialize(taskCards, new JsonSerializerOptions { WriteIndented = false })}";
-                _logger.LogInformation("⏱️ GetRecentNotes: Card creation completed in {ElapsedMs}ms (total: {TotalMs}ms)",
-                    stopwatch.ElapsedMilliseconds - cardCreationStartTime, stopwatch.ElapsedMilliseconds);
-                _logger.LogInformation("⏱️ GetRecentNotes: TOTAL FUNCTION TIME: {TotalMs}ms", stopwatch.ElapsedMilliseconds);
-                _logger.LogInformation("GetRecentNotes: Returning result: {Result}", result);
-                return result;
+                return $"Found {taskCards.Count} recent tasks for {userName}.";
             }
         }
         catch (Exception ex)
@@ -435,7 +448,18 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
                     listName = t.ListName
                 }).ToList();
 
-                return $"TASK_ANALYSIS: {JsonSerializer.Serialize(analysisData, new JsonSerializerOptions { WriteIndented = false })}";
+                // Store analysis data in kernel data for the system to process
+                kernel.Data["TaskCards"] = analysisData;
+                kernel.Data["HasStructuredData"] = "true";
+                kernel.Data["StructuredDataType"] = "tasks";
+                kernel.Data["StructuredDataCount"] = analysisData.Count;
+                
+                var completedCount = analysisData.Count(t => t.isCompleted);
+                var highPriorityCount = analysisData.Count(t => t.priority?.ToLower() == "high");
+                
+                return $"Found {analysisData.Count} tasks matching '{searchQuery}' for {userName}. " +
+                       $"{completedCount} completed, {highPriorityCount} high priority. " +
+                       $"Match types: {string.Join(", ", analysisData.GroupBy(t => t.matchReason).Select(g => $"{g.Count()} by {g.Key}"))}";
             }
             else
             {
@@ -472,7 +496,13 @@ public class ToDoPlugin(IGraphService graphService, ILogger<ToDoPlugin> logger) 
                     }
                 }).ToList();
 
-                return $"TASK_CARDS: {JsonSerializer.Serialize(taskCards, new JsonSerializerOptions { WriteIndented = false })}";
+                // Store structured data in kernel data for the system to process
+                kernel.Data["TaskCards"] = taskCards;
+                kernel.Data["HasStructuredData"] = "true";
+                kernel.Data["StructuredDataType"] = "tasks";
+                kernel.Data["StructuredDataCount"] = taskCards.Count;
+
+                return $"Found {taskCards.Count} tasks matching '{searchQuery}' for {userName}.";
             }
         }
         catch (Exception ex)

@@ -5,23 +5,6 @@ namespace SemanticKernelPoc.Api.Services.Helpers;
 public static class CalendarHelpers
 {
     /// <summary>
-    /// Format calendar events for frontend card rendering
-    /// </summary>
-    public static string FormatCalendarCardsResponse(IEnumerable<object> events, string userName, string timeRange, int totalCount)
-    {
-        var calendarResponse = new
-        {
-            Type = "calendar_events",
-            Count = totalCount,
-            UserName = userName,
-            TimeRange = timeRange,
-            Events = events
-        };
-
-        return $"CALENDAR_CARDS:{JsonSerializer.Serialize(calendarResponse, new JsonSerializerOptions { WriteIndented = false })}";
-    }
-
-    /// <summary>
     /// Create calendar event object for consistent formatting
     /// </summary>
     public static object CreateEventObject(

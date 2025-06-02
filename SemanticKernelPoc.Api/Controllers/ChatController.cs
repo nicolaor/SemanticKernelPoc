@@ -1,18 +1,26 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using SemanticKernelPoc.Api.Models;
-using SemanticKernelPoc.Api.Services.Graph;
-using SemanticKernelPoc.Api.Services.Memory;
-using SemanticKernelPoc.Api.Plugins.ToDo;
 using SemanticKernelPoc.Api.Plugins.Calendar;
 using SemanticKernelPoc.Api.Plugins.Mail;
 using SemanticKernelPoc.Api.Plugins.OneDrive;
-using SemanticKernelPoc.Api.Plugins.SharePoint;
+using SemanticKernelPoc.Api.Plugins.ToDo;
+using SemanticKernelPoc.Api.Services.Graph;
+using SemanticKernelPoc.Api.Services.Memory;
 using SemanticKernelPoc.Api.Services;
+using Microsoft.Identity.Web;
 using Microsoft.AspNetCore.Authentication;
+using System.Security.Claims;
+using Microsoft.Graph;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.ComponentModel;
 using System.Text;
+using ModelContextProtocol;
+using ModelContextProtocol.Client;
 
 namespace SemanticKernelPoc.Api.Controllers;
 
@@ -48,9 +56,85 @@ public class ChatController(
             // Create kernel with user-specific plugins
             var kernel = await CreateUserKernelAsync(chatMessage.UserId);
 
+            // Add MCP function call logging to track when SharePoint functions are called
+            kernel.FunctionInvoking += (sender, e) =>
+            {
+                var functionFullName = $"{e.Function.PluginName}.{e.Function.Name}";
+                
+                if (e.Function.PluginName.StartsWith("SharePointMCP"))
+                {
+                    _logger.LogWarning("🚨 CRITICAL: SharePoint MCP function called - {FunctionName}", functionFullName);
+                    _logger.LogWarning("   📨 Original user message: {UserMessage}", chatMessage.Content);
+                    _logger.LogWarning("   🤔 This should NOT happen for task-related requests!");
+                    
+                    // Log parameters for debugging
+                    foreach (var param in e.Arguments)
+                    {
+                        _logger.LogWarning("   📋 Parameter {Key}: {Value}", param.Key, param.Value);
+                    }
+                }
+                else if (e.Function.PluginName == "ToDoPlugin")
+                {
+                    _logger.LogInformation("✅ CORRECT: ToDo function called for user request - {FunctionName}", functionFullName);
+                    _logger.LogInformation("   📨 User message: {UserMessage}", chatMessage.Content);
+                }
+                else
+                {
+                    _logger.LogInformation("🔧 Function Call: {FunctionName}", functionFullName);
+                    _logger.LogInformation("   📨 User message: {UserMessage}", chatMessage.Content);
+                }
+            };
+
+            kernel.FunctionInvoked += (sender, e) =>
+            {
+                var resultPreview = e.Result?.GetValue<object>()?.ToString();
+                var truncatedResult = resultPreview?.Length > 200 ? resultPreview.Substring(0, 200) + "..." : resultPreview;
+                
+                if (e.Function.PluginName.StartsWith("SharePointMCP"))
+                {
+                    _logger.LogInformation("📡 MCP Function Result: {PluginName}.{FunctionName} completed", 
+                        e.Function.PluginName, e.Function.Name);
+                    
+                    if (!string.IsNullOrEmpty(resultPreview))
+                    {
+                        _logger.LogInformation("   📤 Result preview: {ResultPreview}", truncatedResult);
+                    }
+                    
+                    // Check for authentication errors in the result
+                    if (resultPreview?.Contains("MsalUiRequiredException") == true || 
+                        resultPreview?.Contains("additional permissions") == true ||
+                        resultPreview?.Contains("requires additional consent") == true)
+                    {
+                        _logger.LogWarning("⚠️ SharePoint MCP function returned authentication error: {FunctionName}", e.Function.Name);
+                        _logger.LogWarning("   🔑 Error details: {ErrorDetails}", truncatedResult);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("✅ Function Result: {PluginName}.{FunctionName} completed", 
+                        e.Function.PluginName, e.Function.Name);
+                }
+                
+                // Check for structured data stored in kernel data after function execution
+                if (kernel.Data.ContainsKey("TaskCards"))
+                {
+                    _logger.LogInformation("📊 Structured task data found in kernel data");
+                    var taskCards = kernel.Data["TaskCards"];
+                    var cardType = kernel.Data.TryGetValue("TaskCardType", out var type) ? type?.ToString() : "tasks";
+                    var cardCount = kernel.Data.TryGetValue("TaskCardCount", out var count) ? count : 0;
+                    
+                    _logger.LogInformation("   🎯 Card Type: {CardType}, Count: {Count}", cardType, cardCount);
+                    
+                    // Store structured data for response processing
+                    kernel.Data["HasStructuredData"] = true;
+                    kernel.Data["StructuredDataType"] = cardType;
+                    kernel.Data["StructuredDataCount"] = cardCount;
+                }
+            };
+
             // Get conversation history for context
             var conversationHistory = await _conversationMemory.GetConversationHistoryAsync(sessionId);
-            
+
             // Create enhanced system prompt that guides the AI to use functions naturally
             var systemPrompt = CreateEnhancedSystemPrompt(chatMessage.UserName);
             
@@ -74,35 +158,72 @@ public class ChatController(
             _logger.LogInformation("AI Response Length: {Length} characters", aiResponse.Length);
             _logger.LogInformation("AI Response Content: {Response}", aiResponse);
             
-            // Log if response contains card patterns
-            var cardPatterns = new[] { "TASK_CARDS:", "EMAIL_CARDS:", "CALENDAR_CARDS:", "SHAREPOINT_CARDS:" };
-            var foundPatterns = cardPatterns.Where(pattern => aiResponse.Contains(pattern)).ToList();
-            if (foundPatterns.Any())
+            // Check for structured data in kernel instead of parsing the AI response
+            ChatResponse processedResponse;
+            if (kernel.Data.TryGetValue("HasStructuredData", out var hasStructured) && hasStructured?.ToString() == "true")
             {
-                _logger.LogInformation("Found card patterns: {Patterns}", string.Join(", ", foundPatterns));
+                _logger.LogInformation("✅ Processing response with structured data from kernel");
+                
+                var structuredType = kernel.Data.TryGetValue("StructuredDataType", out var type) ? type?.ToString() : "tasks";
+                var structuredCount = kernel.Data.TryGetValue("StructuredDataCount", out var count) ? count : 0;
+                
+                // Get the appropriate structured data based on type
+                object structuredData = null;
+                switch (structuredType)
+                {
+                    case "tasks":
+                        structuredData = kernel.Data.TryGetValue("TaskCards", out var taskData) ? taskData : null;
+                        break;
+                    case "emails":
+                        structuredData = kernel.Data.TryGetValue("EmailCards", out var emailData) ? emailData : null;
+                        break;
+                    case "calendar":
+                        structuredData = kernel.Data.TryGetValue("CalendarCards", out var calendarData) ? calendarData : null;
+                        break;
+                    default:
+                        structuredData = kernel.Data.TryGetValue("TaskCards", out var defaultData) ? defaultData : null;
+                        break;
+                }
+                
+                processedResponse = new ChatResponse
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    SessionId = sessionId,
+                    Content = aiResponse, // Clean AI response without prefixes
+                    UserId = "ai-assistant",
+                    UserName = "AI Assistant",
+                    IsAiResponse = true,
+                    Timestamp = DateTime.UtcNow,
+                    Cards = new CardData
+                    {
+                        Type = structuredType,
+                        Data = structuredData,
+                        Count = Convert.ToInt32(structuredCount),
+                        UserName = chatMessage.UserName,
+                        TimeRange = "Recent"
+                    },
+                    Metadata = new ResponseMetadata
+                    {
+                        HasCards = true
+                    }
+                };
+                
+                _logger.LogInformation("📊 Created structured response - Type: {Type}, Count: {Count}", structuredType, structuredCount);
             }
             else
             {
-                _logger.LogInformation("No card patterns found in AI response");
-            }
-            
-            // Log if response contains analysis patterns
-            var analysisPatterns = new[] { "TASK_ANALYSIS:", "EMAIL_ANALYSIS:", "CALENDAR_ANALYSIS:" };
-            var foundAnalysisPatterns = analysisPatterns.Where(pattern => aiResponse.Contains(pattern)).ToList();
-            if (foundAnalysisPatterns.Any())
-            {
-                _logger.LogInformation("Found analysis patterns: {Patterns}", string.Join(", ", foundAnalysisPatterns));
+                _logger.LogInformation("📝 Processing as regular text response (no structured data)");
+                
+                // Process the response using the old method for backward compatibility (in case some functions still use prefixes)
+                processedResponse = _responseProcessingService.ProcessResponse(
+                    aiResponse, 
+                    sessionId, 
+                    "ai-assistant", 
+                    "AI Assistant");
             }
             
             _logger.LogInformation("=== AI RESPONSE ANALYSIS END ===");
-
-            // Process the response to extract any card data
-            var processedResponse = _responseProcessingService.ProcessResponse(
-                aiResponse, 
-                sessionId, 
-                "ai-assistant", 
-                "AI Assistant");
-
+                 
             _logger.LogInformation("=== PROCESSED RESPONSE ANALYSIS START ===");
             _logger.LogInformation("Processed Content Length: {Length} characters", processedResponse.Content?.Length ?? 0);
             _logger.LogInformation("Processed Content: {Content}", processedResponse.Content);
@@ -150,7 +271,7 @@ public class ChatController(
 
         var kernelBuilder = Kernel.CreateBuilder();
 
-        // Configure AI service
+        // Configure AI service using the correct config structure
         if (config.UseAzureOpenAI)
         {
             kernelBuilder.AddAzureOpenAIChatCompletion(
@@ -165,47 +286,104 @@ public class ChatController(
                 apiKey: config.ApiKey);
         }
 
-        // Add Microsoft Graph plugins that will use the user's token
-        var userAccessToken = await HttpContext.GetTokenAsync("access_token");
-        if (!string.IsNullOrEmpty(userAccessToken))
-        {
-            // Create plugin instances with dependency injection
-            var graphService = HttpContext.RequestServices.GetRequiredService<IGraphService>();
-
-            var calendarPlugin = new CalendarPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<CalendarPlugin>>());
-            var todoPlugin = new ToDoPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<ToDoPlugin>>());
-
-            // Add Microsoft Graph plugins
-            kernelBuilder.Plugins.AddFromObject(new OneDrivePlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<OneDrivePlugin>>()));
-            kernelBuilder.Plugins.AddFromObject(calendarPlugin);
-            kernelBuilder.Plugins.AddFromObject(new MailPlugin(graphService, HttpContext.RequestServices.GetRequiredService<ILogger<MailPlugin>>()));
-            kernelBuilder.Plugins.AddFromObject(todoPlugin);
-
-            // Add SharePoint MCP plugin
-            var mcpClientService = HttpContext.RequestServices.GetRequiredService<IMcpClientService>();
-            var sharePointPlugin = new SharePointMcpPlugin(mcpClientService, HttpContext.RequestServices.GetRequiredService<ILogger<SharePointMcpPlugin>>());
-            kernelBuilder.Plugins.AddFromObject(sharePointPlugin);
-
-            _logger.LogInformation("Added OneDrive, Calendar, Mail, ToDo, and SharePoint MCP plugins for user {UserId}.", userId);
-        }
-
         var kernel = kernelBuilder.Build();
 
-        // Store user context in kernel for plugins to use
-        if (!string.IsNullOrEmpty(userAccessToken))
-        {
-            kernel.Data["UserAccessToken"] = userAccessToken;
-            kernel.Data["ApiUserAccessToken"] = userAccessToken;
-            kernel.Data["UserId"] = userId ?? string.Empty;
-            kernel.Data["UserName"] = userId ?? string.Empty;
+        // Register plugins
+        var graphService = HttpContext.RequestServices.GetRequiredService<IGraphService>();
+        var serviceProvider = HttpContext.RequestServices;
+        
+        // Get user access token and add to kernel data for plugins
+        var accessToken = await HttpContext.GetTokenAsync("access_token");
+        var userName = User.FindFirst("name")?.Value ?? User.FindFirst("preferred_username")?.Value ?? "User";
+        var userOid = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value ?? "Unknown";
+        
+        // Add user context to kernel data for plugins to access
+        kernel.Data["UserAccessToken"] = accessToken;
+        kernel.Data["UserName"] = userName;
+        kernel.Data["UserId"] = userOid;
+        
+        _logger.LogInformation("🔑 TOKEN DEBUG: Adding user context to kernel data");
+        _logger.LogInformation("   👤 User Name: {UserName}", userName);
+        _logger.LogInformation("   🆔 User OID: {UserOid}", userOid);
+        _logger.LogInformation("   🎫 Access Token Length: {TokenLength} chars", accessToken?.Length ?? 0);
+        _logger.LogInformation("   📋 Kernel Data Keys: {Keys}", string.Join(", ", kernel.Data.Keys));
+        
+        // Add standard plugins directly
+        kernel.Plugins.AddFromType<OneDrivePlugin>("OneDrivePlugin", serviceProvider);
+        kernel.Plugins.AddFromType<CalendarPlugin>("CalendarPlugin", serviceProvider);
+        kernel.Plugins.AddFromType<MailPlugin>("MailPlugin", serviceProvider);
+        kernel.Plugins.AddFromType<ToDoPlugin>("ToDoPlugin", serviceProvider);
 
-            // Log available functions for debugging
-            var functions = kernel.Plugins.GetFunctionsMetadata();
-            _logger.LogInformation("Available functions for user {UserId}: {Functions}",
-                userId, string.Join(", ", functions.Select(f => $"{f.PluginName}.{f.Name}")));
+        // Register MCP tools using HTTPS communication
+        if (!string.IsNullOrEmpty(accessToken))
+        {
+            await RegisterMcpToolsAsync(kernel, accessToken);
+        }
+        else
+        {
+            _logger.LogWarning("⚠️ No access token available for MCP tools registration");
         }
 
         return kernel;
+    }
+
+    private async Task RegisterMcpToolsAsync(Kernel kernel, string userAccessToken)
+    {
+        try
+        {
+            _logger.LogInformation("🚀 Starting MCP Client Integration following proper pattern");
+            _logger.LogInformation("📋 User access token length: {TokenLength} characters", userAccessToken?.Length ?? 0);
+            
+            // Create an MCP client using the proper pattern (but with HTTPS instead of STDIO)
+            await using IMcpClient mcpClient = await CreateMcpClientAsync(userAccessToken);
+
+            // Retrieve and display the list provided by the MCP server
+            IList<McpClientTool> tools = await mcpClient.ListToolsAsync();
+            DisplayTools(tools);
+
+            // Create a kernel and register the MCP tools
+            kernel.Plugins.AddFromFunctions("SharePointMCP", tools.Select(tool => tool.AsKernelFunction()));
+            
+            _logger.LogInformation("✅ Successfully registered {ToolCount} MCP tools", tools.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ Failed to register MCP tools: {ErrorMessage}", ex.Message);
+            // Don't rethrow - continue without MCP tools
+        }
+    }
+
+    private async Task<IMcpClient> CreateMcpClientAsync(string userAccessToken)
+    {
+        try
+        {
+            _logger.LogInformation("🔧 Creating MCP client for HTTPS communication...");
+            
+            // Create HTTPS-based MCP client using SSE transport (following sample pattern but with SSE for HTTPS)
+            var mcpClient = await McpClientFactory.CreateAsync(
+                clientTransport: new SseClientTransport(new SseClientTransportOptions
+                {
+                    Endpoint = new Uri("https://localhost:31339/sse")
+                })
+            );
+            
+            _logger.LogInformation("✅ MCP client created successfully");
+            return mcpClient;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ Failed to create MCP client: {ErrorMessage}", ex.Message);
+            throw;
+        }
+    }
+
+    private void DisplayTools(IList<McpClientTool> tools)
+    {
+        _logger.LogInformation("📋 Available MCP tools:");
+        foreach (var tool in tools)
+        {
+            _logger.LogInformation("   • Name: {Name}, Description: {Description}", tool.Name, tool.Description);
+        }
     }
 
     [HttpGet("sessions")]
@@ -282,44 +460,78 @@ public class ChatController(
     {
         return $@"You are an intelligent assistant helping {userName} with their Microsoft 365 tasks and data.
 
+CRITICAL FUNCTION SELECTION RULES:
+
+1. TASK/TODO QUERIES - Use ONLY ToDoPlugin functions:
+   - ""my tasks"", ""show tasks"", ""get tasks"", ""task list"", ""to-do"", ""todos""
+   - ""what tasks do I have"", ""recent tasks"", ""task summary""
+   - NEVER call SharePointMCP functions for task requests
+   - Use: ToDoPlugin.GetRecentNotes, ToDoPlugin.SearchNotes, ToDoPlugin.CreateNote
+
+2. SHAREPOINT QUERIES - Use ONLY SharePointMCP functions:
+   - ""SharePoint sites"", ""find sites"", ""search sites""
+   - ""workspace sites"", ""team sites"", ""collaboration sites""
+   - Use: SharePointMCP.search_sharepoint_sites, SharePointMCP.find_sharepoint_sites_by_keyword
+
+3. EMAIL QUERIES - Use ONLY MailPlugin functions:
+   - ""emails"", ""messages"", ""inbox"", ""mail""
+   - Use: MailPlugin.GetRecentEmails, MailPlugin.SearchEmails
+
+4. CALENDAR QUERIES - Use ONLY CalendarPlugin functions:
+   - ""calendar"", ""meetings"", ""appointments"", ""events""
+   - Use: CalendarPlugin.GetUpcomingEvents, CalendarPlugin.GetTodaysEvents
+
+5. ONEDRIVE/FILES QUERIES - Use ONLY OneDrivePlugin functions:
+   - ""files"", ""OneDrive"", ""documents""
+   - Use: OneDrivePlugin.GetOneDriveFiles, OneDrivePlugin.GetOneDriveInfo
+
 CRITICAL RESPONSE FORMAT RULES:
 
 1. CARD DISPLAY vs ANALYSIS MODE:
    - For DISPLAY requests (""show"", ""list"", ""get"", ""find"", ""my tasks"", etc.): Use default function parameters to get cards
    - For ANALYSIS requests (""summarize"", ""analyze"", ""what are my tasks about"", ""overview"", etc.): Set analysisMode=true
 
-2. CARD FORMAT PRESERVATION:
-   - When functions return 'TASK_CARDS:', 'EMAIL_CARDS:', 'CALENDAR_CARDS:', or 'SHAREPOINT_CARDS:', preserve this EXACT format
-   - DO NOT convert card data to natural language - keep the structured format intact
-   - You can add explanatory text BEFORE the card data, but the card format must be preserved
+2. NATURAL LANGUAGE RESPONSES:
+   - Functions return clean natural language responses (e.g., ""Found 3 recent tasks for {userName}"")
+   - Structured data for UI cards is handled automatically by the system
+   - Provide the function response directly to the user - no additional formatting needed
+   - Do NOT try to format or modify function responses
 
-3. ANALYSIS FORMAT HANDLING:
-   - When functions return 'TASK_ANALYSIS:', 'EMAIL_ANALYSIS:', etc., provide a natural language summary
-   - Extract insights, patterns, and key information from the analysis data
-   - DO NOT preserve the analysis JSON format - convert it to readable text
+EXAMPLES OF CORRECT FUNCTION CALLS:
+
+Task Request: ""show my tasks""
+✅ CORRECT: ToDoPlugin.GetRecentNotes()
+❌ WRONG: SharePointMCP functions - these are for sites only!
+
+Task Analysis: ""summarize my tasks""
+✅ CORRECT: ToDoPlugin.GetRecentNotes(analysisMode=true)
+❌ WRONG: SharePointMCP functions - these are for sites only!
+
+SharePoint Request: ""find SharePoint sites""
+✅ CORRECT: SharePointMCP.search_sharepoint_sites()
+❌ WRONG: ToDoPlugin functions - these are for tasks only!
 
 EXAMPLES OF CORRECT RESPONSES:
 
 Display Request:
 User: 'show my tasks'
-Function Call: GetRecentNotes(analysisMode=false)
-Correct Response: 'Here are your recent tasks:
-
-TASK_CARDS: [{{""id"":""task_1"",""title"":""Buy groceries"",...}}]'
+Function Call: ToDoPlugin.GetRecentNotes(analysisMode=false)
+Function Returns: 'Found 3 recent tasks for {userName}.'
+Correct Response: 'Found 3 recent tasks for {userName}.' (cards will display automatically)
 
 Analysis Request:
 User: 'summarize my tasks'
-Function Call: GetRecentNotes(analysisMode=true)
-Function Returns: 'TASK_ANALYSIS: [{{""title"":""Buy groceries"",""status"":""InProgress"",...}}]'
-Correct Response: 'Here's a summary of your tasks:
-
-You have 3 active tasks. Most are in progress, with 1 high-priority task due this week (Buy groceries). Your tasks focus mainly on shopping and work projects.'
+Function Call: ToDoPlugin.GetRecentNotes(analysisMode=true)
+Function Returns: 'Found 3 tasks for {userName}. 1 completed, 1 high priority. Most recent tasks cover: Buy groceries, Prepare presentation, Schedule dentist appointment.'
+Correct Response: 'Found 3 tasks for {userName}. 1 completed, 1 high priority. Most recent tasks cover: Buy groceries, Prepare presentation, Schedule dentist appointment.'
 
 FUNCTION USAGE WITH ANALYSIS MODE:
 - GetRecentNotes: Use analysisMode=true for ""summarize tasks"", ""task overview"", ""what are my tasks about""
 - GetRecentEmails: Use analysisMode=true for ""email summary"", ""what emails did I get""
 - SearchNotes: Use analysisMode=true for ""analyze tasks about X"", ""summarize tasks containing Y""
 - For display queries (""show"", ""list"", ""get""), use default analysisMode=false
+
+REMEMBER: NEVER mix function types! Tasks = ToDoPlugin ONLY. SharePoint = SharePointMCP ONLY. 
 
 Always be helpful and accurate. Pay attention to whether the user wants to see items (cards) or understand them (analysis).";
     }
@@ -346,5 +558,10 @@ Always be helpful and accurate. Pay attention to whether the user wants to see i
         context.AppendLine("Assistant:");
         
         return context.ToString();
+    }
+
+    private string GenerateSessionId(string userId)
+    {
+        return $"session_{userId}_{DateTime.UtcNow:yyyyMMdd}";
     }
 }

@@ -53,7 +53,7 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
             evt.IsAllDay ?? false,
             evt.Id,
             evt.Attendees?.Any() == true ? evt.Attendees.Count : null,
-            CalendarResponseFormats.GenerateOutlookWebLink(evt.Id ?? ""),
+            CalendarLinkHelpers.GenerateOutlookWebLink(evt.Id ?? ""),
             evt.Attendees?.Select(a => new AttendeeInfo(
                 a.EmailAddress?.Name ?? a.EmailAddress?.Address ?? "Unknown",
                 a.EmailAddress?.Address ?? "",
@@ -87,37 +87,37 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
                 {
                     if (analysisMode)
                     {
-                        // For analysis mode, return clean text without technical IDs
-                        var analysisData = events.Value.Select(evt => new
+                        // For analysis mode, return clean summary
+                        var allDayCount = events.Value.Count(e => e.IsAllDay ?? false);
+                        var todayCount = events.Value.Count(e => e.Start?.DateTime != null && DateTime.Parse(e.Start.DateTime).Date == DateTime.Today);
+                        
+                        return $"Found {events.Value.Count} upcoming events for {userName} in the next {days} days. " +
+                               $"{allDayCount} all-day events, {todayCount} events today. " +
+                               $"Upcoming events: {string.Join(", ", events.Value.Take(3).Select(e => e.Subject ?? "No Subject"))}.";
+                    }
+                    else
+                    {
+                        // Create calendar cards for the new approach
+                        var calendarCards = events.Value.Select((evt, index) => new
                         {
+                            id = $"event_{index}_{evt.Id?.GetHashCode().ToString("X")}",
                             subject = evt.Subject ?? "No Subject",
-                            startDate = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd") : "Unknown",
-                            startTime = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("HH:mm") : "Unknown",
-                            endDate = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd") : "Unknown", 
-                            endTime = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("HH:mm") : "Unknown",
+                            start = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
+                            end = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
                             location = evt.Location?.DisplayName ?? "No location",
                             organizer = evt.Organizer?.EmailAddress?.Name ?? "Unknown",
                             isAllDay = evt.IsAllDay ?? false,
                             attendeeCount = evt.Attendees?.Count() ?? 0,
-                            body = evt.Body?.Content ?? ""
-                        });
+                            webLink = $"https://outlook.office365.com/owa/?itemid={System.Web.HttpUtility.UrlEncode(evt.Id ?? "")}&exvsurl=1&path=/calendar/item"
+                        }).ToList();
 
-                        return $"CALENDAR_ANALYSIS:{System.Text.Json.JsonSerializer.Serialize(analysisData, new System.Text.Json.JsonSerializerOptions { WriteIndented = false })}";
-                    }
-                    else
-                    {
-                        // For card display mode, use the existing format
-                        var eventList = events.Value.Select(CreateCalendarEventResponse);
+                        // Store structured data in kernel data for the system to process
+                        kernel.Data["CalendarCards"] = calendarCards;
+                        kernel.Data["HasStructuredData"] = "true";
+                        kernel.Data["StructuredDataType"] = "calendar";
+                        kernel.Data["StructuredDataCount"] = calendarCards.Count;
 
-                        var calendarData = new CalendarCardsData(
-                            "calendar_events",
-                            events.Value.Count,
-                            userName,
-                            $"next {days} days",
-                            eventList
-                        );
-
-                        return CalendarResponseFormats.FormatCalendarCards(calendarData);
+                        return $"Found {calendarCards.Count} upcoming events for {userName} in the next {days} days.";
                     }
                 }
 
@@ -343,37 +343,36 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
                 {
                     if (analysisMode)
                     {
-                        // For analysis mode, return clean text without technical IDs
-                        var analysisData = events.Value.Select(evt => new
+                        // For analysis mode, return clean summary
+                        var allDayCount = events.Value.Count(e => e.IsAllDay ?? false);
+                        
+                        return $"Found {events.Value.Count} events today for {userName}. " +
+                               $"{allDayCount} all-day events. " +
+                               $"Today's events: {string.Join(", ", events.Value.Take(3).Select(e => e.Subject ?? "No Subject"))}.";
+                    }
+                    else
+                    {
+                        // Create calendar cards for the new approach
+                        var calendarCards = events.Value.Select((evt, index) => new
                         {
+                            id = $"today_{index}_{evt.Id?.GetHashCode().ToString("X")}",
                             subject = evt.Subject ?? "No Subject",
-                            startDate = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd") : "Unknown",
-                            startTime = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("HH:mm") : "Unknown",
-                            endDate = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd") : "Unknown", 
-                            endTime = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("HH:mm") : "Unknown",
+                            start = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
+                            end = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
                             location = evt.Location?.DisplayName ?? "No location",
                             organizer = evt.Organizer?.EmailAddress?.Name ?? "Unknown",
                             isAllDay = evt.IsAllDay ?? false,
                             attendeeCount = evt.Attendees?.Count() ?? 0,
-                            body = evt.Body?.Content ?? ""
-                        });
+                            webLink = $"https://outlook.office365.com/owa/?itemid={System.Web.HttpUtility.UrlEncode(evt.Id ?? "")}&exvsurl=1&path=/calendar/item"
+                        }).ToList();
 
-                        return $"CALENDAR_ANALYSIS:{System.Text.Json.JsonSerializer.Serialize(analysisData, new System.Text.Json.JsonSerializerOptions { WriteIndented = false })}";
-                    }
-                    else
-                    {
-                        // For card display mode, use the existing format
-                        var eventList = events.Value.Select(CreateCalendarEventResponse);
+                        // Store structured data in kernel data for the system to process
+                        kernel.Data["CalendarCards"] = calendarCards;
+                        kernel.Data["HasStructuredData"] = "true";
+                        kernel.Data["StructuredDataType"] = "calendar";
+                        kernel.Data["StructuredDataCount"] = calendarCards.Count;
 
-                        var calendarData = new CalendarCardsData(
-                            "calendar_events",
-                            events.Value.Count,
-                            userName,
-                            $"today ({today:yyyy-MM-dd})",
-                            eventList
-                        );
-
-                        return CalendarResponseFormats.FormatCalendarCards(calendarData);
+                        return $"Found {calendarCards.Count} events for today ({today:yyyy-MM-dd}) for {userName}.";
                     }
                 }
 
@@ -391,37 +390,36 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
                 {
                     if (analysisMode)
                     {
-                        // For analysis mode, return clean text without technical IDs
-                        var upcomingAnalysisData = upcomingEvents.Value.Select(evt => new
+                        // For analysis mode, return clean summary
+                        var allDayCount = upcomingEvents.Value.Count(e => e.IsAllDay ?? false);
+                        
+                        return $"No events today. Found {upcomingEvents.Value.Count} upcoming events for {userName} in the next week. " +
+                               $"{allDayCount} all-day events. " +
+                               $"Next events: {string.Join(", ", upcomingEvents.Value.Take(3).Select(e => e.Subject ?? "No Subject"))}.";
+                    }
+                    else
+                    {
+                        // Create calendar cards for upcoming events
+                        var upcomingCards = upcomingEvents.Value.Select((evt, index) => new
                         {
+                            id = $"upcoming_{index}_{evt.Id?.GetHashCode().ToString("X")}",
                             subject = evt.Subject ?? "No Subject",
-                            startDate = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd") : "Unknown",
-                            startTime = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("HH:mm") : "Unknown",
-                            endDate = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd") : "Unknown", 
-                            endTime = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("HH:mm") : "Unknown",
+                            start = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
+                            end = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
                             location = evt.Location?.DisplayName ?? "No location",
                             organizer = evt.Organizer?.EmailAddress?.Name ?? "Unknown",
                             isAllDay = evt.IsAllDay ?? false,
                             attendeeCount = evt.Attendees?.Count() ?? 0,
-                            body = evt.Body?.Content ?? ""
-                        });
+                            webLink = $"https://outlook.office365.com/owa/?itemid={System.Web.HttpUtility.UrlEncode(evt.Id ?? "")}&exvsurl=1&path=/calendar/item"
+                        }).ToList();
 
-                        return $"CALENDAR_ANALYSIS:{System.Text.Json.JsonSerializer.Serialize(upcomingAnalysisData, new System.Text.Json.JsonSerializerOptions { WriteIndented = false })}";
-                    }
-                    else
-                    {
-                        // For card display mode, use the existing format
-                        var upcomingEventList = upcomingEvents.Value.Select(CreateCalendarEventResponse);
+                        // Store structured data in kernel data for the system to process
+                        kernel.Data["CalendarCards"] = upcomingCards;
+                        kernel.Data["HasStructuredData"] = "true";
+                        kernel.Data["StructuredDataType"] = "calendar";
+                        kernel.Data["StructuredDataCount"] = upcomingCards.Count;
 
-                        var upcomingResponse = new CalendarCardsData(
-                            "calendar_events",
-                            upcomingEvents.Value.Count,
-                            userName,
-                            $"No events today ({today:yyyy-MM-dd}), showing next {upcomingEvents.Value.Count} upcoming event{(upcomingEvents.Value.Count != 1 ? "s" : "")}",
-                            upcomingEventList
-                        );
-
-                        return CalendarResponseFormats.FormatCalendarCards(upcomingResponse);
+                        return $"No events today ({today:yyyy-MM-dd}), showing {upcomingCards.Count} upcoming event{(upcomingCards.Count != 1 ? "s" : "")} for {userName}.";
                     }
                 }
 
@@ -562,17 +560,27 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
 
                 if (events?.Value?.Any() == true)
                 {
-                    var eventList = events.Value.Select(CreateCalendarEventResponse);
+                    // Create calendar cards for the new approach
+                    var calendarCards = events.Value.Select((evt, index) => new
+                    {
+                        id = $"range_{index}_{evt.Id?.GetHashCode().ToString("X")}",
+                        subject = evt.Subject ?? "No Subject",
+                        start = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
+                        end = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
+                        location = evt.Location?.DisplayName ?? "No location",
+                        organizer = evt.Organizer?.EmailAddress?.Name ?? "Unknown",
+                        isAllDay = evt.IsAllDay ?? false,
+                        attendeeCount = evt.Attendees?.Count() ?? 0,
+                        webLink = $"https://outlook.office365.com/owa/?itemid={System.Web.HttpUtility.UrlEncode(evt.Id ?? "")}&exvsurl=1&path=/calendar/item"
+                    }).ToList();
 
-                    var calendarData = new CalendarCardsData(
-                        "calendar_events",
-                        events.Value.Count,
-                        userName,
-                        $"{startDate} to {endDate}",
-                        eventList
-                    );
+                    // Store structured data in kernel data for the system to process
+                    kernel.Data["CalendarCards"] = calendarCards;
+                    kernel.Data["HasStructuredData"] = "true";
+                    kernel.Data["StructuredDataType"] = "calendar";
+                    kernel.Data["StructuredDataCount"] = calendarCards.Count;
 
-                    return CalendarResponseFormats.FormatCalendarCards(calendarData);
+                    return $"Found {calendarCards.Count} events from {startDate} to {endDate} for {userName}.";
                 }
 
                 return $"No events found from {startDate} to {endDate} for {userName}.";
@@ -638,17 +646,31 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
                 if (events?.Value?.Any() == true)
                 {
                     var nextEvent = events.Value.First();
-                    var eventList = new[] { CreateCalendarEventResponse(nextEvent) };
+                    
+                    // Create calendar card for the next appointment
+                    var calendarCards = new[]
+                    {
+                        new
+                        {
+                            id = $"next_{nextEvent.Id?.GetHashCode().ToString("X")}",
+                            subject = nextEvent.Subject ?? "No Subject",
+                            start = nextEvent.Start?.DateTime != null ? DateTime.Parse(nextEvent.Start.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
+                            end = nextEvent.End?.DateTime != null ? DateTime.Parse(nextEvent.End.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
+                            location = nextEvent.Location?.DisplayName ?? "No location",
+                            organizer = nextEvent.Organizer?.EmailAddress?.Name ?? "Unknown",
+                            isAllDay = nextEvent.IsAllDay ?? false,
+                            attendeeCount = nextEvent.Attendees?.Count() ?? 0,
+                            webLink = $"https://outlook.office365.com/owa/?itemid={System.Web.HttpUtility.UrlEncode(nextEvent.Id ?? "")}&exvsurl=1&path=/calendar/item"
+                        }
+                    }.ToList();
 
-                    var calendarData = new CalendarCardsData(
-                        "calendar_events",
-                        1,
-                        userName,
-                        "next appointment",
-                        eventList
-                    );
+                    // Store structured data in kernel data for the system to process
+                    kernel.Data["CalendarCards"] = calendarCards;
+                    kernel.Data["HasStructuredData"] = "true";
+                    kernel.Data["StructuredDataType"] = "calendar";
+                    kernel.Data["StructuredDataCount"] = calendarCards.Count;
 
-                    return CalendarResponseFormats.FormatCalendarCards(calendarData);
+                    return $"Your next appointment is '{nextEvent.Subject ?? "No Subject"}' scheduled for {(nextEvent.Start?.DateTime != null ? DateTime.Parse(nextEvent.Start.DateTime).ToString("MMM dd, yyyy 'at' HH:mm") : "Unknown time")} for {userName}.";
                 }
 
                 return $"No upcoming appointments found for {userName}.";
@@ -679,29 +701,31 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
 
                 if (includeDetails && events?.Value?.Any() == true)
                 {
-                    var eventList = events.Value.Select(CreateCalendarEventResponse);
+                    // Create calendar cards for detailed response
+                    var calendarCards = events.Value.Select((evt, index) => new
+                    {
+                        id = $"count_{index}_{evt.Id?.GetHashCode().ToString("X")}",
+                        subject = evt.Subject ?? "No Subject",
+                        start = evt.Start?.DateTime != null ? DateTime.Parse(evt.Start.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
+                        end = evt.End?.DateTime != null ? DateTime.Parse(evt.End.DateTime).ToString("yyyy-MM-dd HH:mm") : "Unknown",
+                        location = evt.Location?.DisplayName ?? "No location",
+                        organizer = evt.Organizer?.EmailAddress?.Name ?? "Unknown",
+                        isAllDay = evt.IsAllDay ?? false,
+                        attendeeCount = evt.Attendees?.Count() ?? 0,
+                        webLink = $"https://outlook.office365.com/owa/?itemid={System.Web.HttpUtility.UrlEncode(evt.Id ?? "")}&exvsurl=1&path=/calendar/item"
+                    }).ToList();
 
-                    var detailedResponse = new CalendarCardsData(
-                        "calendar_events",
-                        eventCount,
-                        userName,
-                        timeRangeDescription,
-                        eventList
-                    );
+                    // Store structured data in kernel data for the system to process
+                    kernel.Data["CalendarCards"] = calendarCards;
+                    kernel.Data["HasStructuredData"] = "true";
+                    kernel.Data["StructuredDataType"] = "calendar";
+                    kernel.Data["StructuredDataCount"] = calendarCards.Count;
 
-                    return CalendarResponseFormats.FormatCalendarCards(detailedResponse);
+                    return $"Found {eventCount} events {timeRangeDescription} for {userName} with details.";
                 }
                 else
                 {
-                    var countResponse = new CalendarCardsData(
-                        "calendar_events",
-                        eventCount,
-                        userName,
-                        timeRangeDescription,
-                        []
-                    );
-
-                    return CalendarResponseFormats.FormatCalendarCards(countResponse);
+                    return $"Found {eventCount} event{(eventCount != 1 ? "s" : "")} {timeRangeDescription} for {userName}.";
                 }
             },
             "GetEventCount"

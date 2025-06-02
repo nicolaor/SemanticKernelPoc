@@ -73,7 +73,7 @@ public class ResponseProcessingService : IResponseProcessingService
         return response;
     }
 
-    private CardData? ExtractCardData(string content)
+    private CardData ExtractCardData(string content)
     {
         try
         {
@@ -304,27 +304,78 @@ public class ResponseProcessingService : IResponseProcessingService
 
     private string CleanContentFromCardData(string content)
     {
-        // Remove card data lines and response format indicators but keep any explanatory text
-        var patterns = new[]
+        try
         {
-            @"TASK_CARDS:.*",
-            @"EMAIL_CARDS:.*",
-            @"CALENDAR_CARDS:.*",
-            @"SHAREPOINT_CARDS:.*",
-            @"DISPLAY_CARDS:.*",
-            @"DISPLAY_TEXT:.*",
-            @"DISPLAY_MIXED:.*"
-        };
+            _logger.LogInformation("Cleaning content from card data. Original length: {Length}", content.Length);
+            
+            var result = content;
 
-        var result = content;
-        foreach (var pattern in patterns)
-        {
-            result = Regex.Replace(result, pattern, "", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+            // Remove card data prefixes and their JSON content
+            // Use Singleline mode so . matches newlines too
+            var patterns = new[]
+            {
+                @"TASK_CARDS:\s*\[.*?\]",
+                @"EMAIL_CARDS:\s*\[.*?\]", 
+                @"CALENDAR_CARDS:\s*\{.*?\}",
+                @"SHAREPOINT_CARDS:\s*\[.*?\]",
+                @"DISPLAY_CARDS:\s*\[.*?\]",
+                @"DISPLAY_TEXT:\s*.*?(?=\n\n|\Z)",
+                @"DISPLAY_MIXED:\s*.*?(?=\n\n|\Z)"
+            };
+
+            foreach (var pattern in patterns)
+            {
+                var beforeLength = result.Length;
+                result = Regex.Replace(result, pattern, "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                var afterLength = result.Length;
+                
+                if (beforeLength != afterLength)
+                {
+                    _logger.LogInformation("Pattern '{Pattern}' removed {RemovedChars} characters", pattern, beforeLength - afterLength);
+                }
+            }
+
+            // Also remove any remaining JSON objects that look like task data
+            // This catches cases where the JSON spans multiple lines or has different formatting
+            result = Regex.Replace(result, @"\{\s*""id"":\s*""task_.*?\}", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            
+            // Remove lines that are purely JSON arrays or objects
+            var lines = result.Split('\n');
+            var cleanedLines = new List<string>();
+            
+            foreach (var line in lines)
+            {
+                var trimmedLine = line.Trim();
+                
+                // Skip lines that are purely JSON
+                if (string.IsNullOrEmpty(trimmedLine) || 
+                    trimmedLine == "[" || 
+                    trimmedLine == "]" || 
+                    trimmedLine == "{" || 
+                    trimmedLine == "}" ||
+                    trimmedLine.StartsWith("{\"id\":\"task_") ||
+                    (trimmedLine.StartsWith("{") && trimmedLine.Contains("\"id\":") && trimmedLine.Contains("\"title\":")))
+                {
+                    continue;
+                }
+                
+                cleanedLines.Add(line);
+            }
+            
+            result = string.Join('\n', cleanedLines);
+
+            // Clean up multiple blank lines
+            result = Regex.Replace(result, @"\n\s*\n\s*\n+", "\n\n");
+            result = result.Trim();
+            
+            _logger.LogInformation("Cleaned content. Final length: {Length}", result.Length);
+            
+            return result;
         }
-
-        // Clean up multiple blank lines
-        result = Regex.Replace(result, @"\n\s*\n\s*\n", "\n\n");
-        
-        return result.Trim();
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error cleaning content from card data");
+            return content; // Return original content if cleaning fails
+        }
     }
 } 
