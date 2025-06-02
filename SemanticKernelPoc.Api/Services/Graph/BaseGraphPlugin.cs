@@ -1,13 +1,22 @@
 using Microsoft.Graph;
 using Microsoft.SemanticKernel;
 using System.Text.Json;
+using SemanticKernelPoc.Api.Services.Helpers;
 
 namespace SemanticKernelPoc.Api.Services.Graph;
 
-public abstract class BaseGraphPlugin(IGraphService graphService, ILogger logger)
+public abstract class BaseGraphPlugin
 {
-    protected readonly IGraphService _graphService = graphService;
-    protected readonly ILogger _logger = logger;
+    protected readonly IGraphService _graphService;
+    protected readonly IGraphClientFactory _graphClientFactory;
+    protected readonly ILogger _logger;
+
+    protected BaseGraphPlugin(IGraphService graphService, IGraphClientFactory graphClientFactory, ILogger logger)
+    {
+        _graphService = graphService;
+        _graphClientFactory = graphClientFactory;
+        _logger = logger;
+    }
 
     /// <summary>
     /// Execute a Graph operation with standardized error handling
@@ -64,6 +73,64 @@ public abstract class BaseGraphPlugin(IGraphService graphService, ILogger logger
     }
 
     /// <summary>
+    /// Get authenticated Graph client and user info with standardized validation
+    /// </summary>
+    protected async Task<(bool Success, string ErrorMessage, GraphServiceClient Client, string UserName)> 
+        GetAuthenticatedGraphClientAsync(Kernel kernel)
+    {
+        var (accessToken, userName) = KernelAuthHelper.GetUserAuthInfo(kernel);
+        
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return (false, KernelAuthHelper.GetAuthenticationErrorMessage("access Microsoft Graph"), null!, userName);
+        }
+
+        try
+        {
+            var client = await _graphClientFactory.CreateClientAsync(accessToken);
+            return (true, string.Empty, client, userName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create Graph client for user {UserName}", userName);
+            return (false, $"❌ Error creating Graph client: {ex.Message}", null!, userName);
+        }
+    }
+
+    /// <summary>
+    /// Set structured data for card display (non-analysis mode)
+    /// </summary>
+    protected void SetStructuredDataForCards(Kernel kernel, string dataType, object cardData, int count, string functionResponse = null)
+    {
+        KernelAuthHelper.SetStructuredData(kernel, dataType, cardData, count, functionResponse);
+    }
+
+    /// <summary>
+    /// Handle analysis vs card mode responses
+    /// </summary>
+    protected string HandleAnalysisOrCardResponse(
+        Kernel kernel, 
+        bool analysisMode, 
+        string dataType,
+        object cardData, 
+        int count, 
+        string analysisText,
+        string functionResponse = null)
+    {
+        if (analysisMode)
+        {
+            // For analysis mode, don't store structured data - return text only
+            return analysisText;
+        }
+        else
+        {
+            // For card display mode, store structured data
+            SetStructuredDataForCards(kernel, dataType, cardData, count, functionResponse);
+            return functionResponse ?? $"Found {count} {dataType}. Details are displayed in the cards below.";
+        }
+    }
+
+    /// <summary>
     /// Format a collection as JSON with user context
     /// </summary>
     protected string FormatJsonResponse<T>(IEnumerable<T> items, string userName, string itemType, int? totalCount = null)
@@ -101,5 +168,13 @@ public abstract class BaseGraphPlugin(IGraphService graphService, ILogger logger
             }
         }
         return response.TrimEnd();
+    }
+
+    /// <summary>
+    /// Get standard authentication error message for specific operation
+    /// </summary>
+    protected string GetAuthErrorMessage(string operation, string userName = null)
+    {
+        return KernelAuthHelper.GetAuthenticationErrorMessage(operation, userName);
     }
 }

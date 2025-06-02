@@ -60,6 +60,12 @@ builder.Services.AddScoped<IIntentDetectionService, IntentDetectionService>();
 // Add Graph Service for plugins (now using manual OBO approach)
 builder.Services.AddScoped<IGraphService, GraphService>();
 
+// Add Graph Client Factory for efficient client management
+builder.Services.AddSingleton<IGraphClientFactory>(sp => 
+    new GraphClientFactory(
+        sp.GetRequiredService<ILogger<GraphClientFactory>>(), 
+        sp.GetRequiredService<IConfiguration>()));
+
 // Add HttpClient for MCP communication
 builder.Services.AddHttpClient<IMcpClientService, McpClientService>(client =>
 {
