@@ -7,27 +7,28 @@ using SemanticKernelPoc.Api.Services.Graph;
 
 namespace SemanticKernelPoc.Api.Plugins.Mail;
 
-public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) : BaseGraphPlugin(graphService, logger)
+public class MailPlugin : BaseGraphPlugin
 {
-    [KernelFunction, Description("Get recent emails from the user's inbox. Use this when user asks for 'emails', 'mail', 'inbox', 'messages', 'last N emails', 'recent emails', etc. Supports filtering by count, time period, and read status.")]
+    public MailPlugin(IGraphService graphService, IGraphClientFactory graphClientFactory, ILogger<MailPlugin> logger) 
+        : base(graphService, graphClientFactory, logger)
+    {
+    }
+
+    [KernelFunction, Description("Get recent emails from the user's inbox. Use this when user asks for 'emails', 'mail', 'inbox', 'messages', 'last N emails', 'recent emails', etc. For display purposes, use analysisMode=false. For summary/analysis requests like 'summarize my emails', 'what are my emails about', 'email summary', use analysisMode=true.")]
     public async Task<string> GetRecentEmails(Kernel kernel,
         [Description("Number of recent emails to retrieve (default 5, max 10). Use this when user specifies 'last 2 emails', 'get 5 emails', etc.")] int count = 5,
         [Description("Time period filter: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', or number of days like '7' for last 7 days")] string timePeriod = null,
         [Description("Filter by read status: 'unread' for unread only, 'read' for read only, or null for all emails")] string readStatus = null,
         [Description("Filter by importance: 'high', 'normal', 'low', or null for all importance levels")] string importance = null,
-        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
+        [Description("Analysis mode: ALWAYS set to true when user asks for summaries, analysis, or 'what are my emails about'. Set to false for listing/displaying emails. Keywords that trigger true: summarize, summary, analyze, analysis, what about, content overview.")] bool analysisMode = false)
     {
         try
         {
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
-
-            if (string.IsNullOrEmpty(userAccessToken))
+            var (success, errorMessage, graphClient, userName) = await GetAuthenticatedGraphClientAsync(kernel);
+            if (!success)
             {
-                return "Unable to access emails - user authentication required.";
+                return errorMessage;
             }
-
-            var graphClient = await CreateClientAsync(userAccessToken);
 
             // Build filter conditions
             var filters = new List<string>();
@@ -75,12 +76,17 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                 }
             }
 
+            // For analysis mode, get more detailed email content
+            var selectFields = analysisMode 
+                ? new[] { "subject", "from", "receivedDateTime", "isRead", "importance", "body", "bodyPreview", "id", "webLink" }
+                : new[] { "subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview", "id", "webLink" };
+
             // Use simplified Messages API with filters
             var messages = await graphClient.Me.Messages.GetAsync(requestConfig =>
             {
                 requestConfig.QueryParameters.Top = Math.Min(count, 10);
                 requestConfig.QueryParameters.Orderby = ["receivedDateTime desc"];
-                requestConfig.QueryParameters.Select = ["subject", "from", "receivedDateTime", "isRead", "importance", "bodyPreview", "id", "webLink"];
+                requestConfig.QueryParameters.Select = selectFields;
                 
                 if (filters.Any())
                 {
@@ -92,17 +98,55 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
             {
                 if (analysisMode)
                 {
-                    // For analysis mode, return clean summary without prefixes
-                    var completedCount = messages.Value.Count(m => m.IsRead ?? false);
-                    var highImportanceCount = messages.Value.Count(m => m.Importance?.ToString()?.ToLower() == "high");
-                    
-                    return $"Found {messages.Value.Count} emails for {userName}. " +
-                           $"{completedCount} read, {highImportanceCount} high importance. " +
-                           $"Recent emails from: {string.Join(", ", messages.Value.Take(3).Select(m => m.From?.EmailAddress?.Name ?? "Unknown"))}.";
+                    // For analysis mode, use AI to summarize actual email content
+                    var emailContents = messages.Value.Select(msg => new
+                    {
+                        From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
+                        Subject = msg.Subject ?? "No Subject",
+                        ReceivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd") ?? "Unknown",
+                        Content = ExtractEmailContent(msg),
+                        IsRead = msg.IsRead ?? false,
+                        Importance = msg.Importance?.ToString() ?? "Normal"
+                    }).ToList();
+
+                    // Create a prompt for AI to summarize the emails
+                    var emailSummaryPrompt = $@"Please provide a concise summary of these {emailContents.Count} recent emails for the user. Focus on the main topics, key information, and actionable items. Don't just list metadata - summarize what the emails are actually about:
+
+{string.Join("\n\n", emailContents.Select((email, i) => 
+    $"Email {i + 1}:\n" +
+    $"From: {email.From}\n" +
+    $"Subject: {email.Subject}\n" +
+    $"Date: {email.ReceivedDate}\n" +
+    $"Content: {email.Content}\n" +
+    $"Status: {(email.IsRead ? "Read" : "Unread")}" +
+    (email.Importance != "Normal" ? $"\nImportance: {email.Importance}" : "")))}
+
+Provide a helpful summary that tells the user what these emails are about, not just who sent them.";
+
+                    // Use the global kernel to get AI summary
+                    var globalKernel = kernel.Services.GetService<Kernel>();
+                    if (globalKernel != null)
+                    {
+                        try
+                        {
+                            var summaryResult = await globalKernel.InvokePromptAsync(emailSummaryPrompt);
+                            return summaryResult.ToString();
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to generate AI summary for emails");
+                            // Fallback to simple summary
+                            return CreateFallbackEmailSummary(emailContents, userName);
+                        }
+                    }
+                    else
+                    {
+                        return CreateFallbackEmailSummary(emailContents, userName);
+                    }
                 }
                 else
                 {
-                    // Create email cards for the new approach
+                    // Create email cards for card display mode - must match React EmailItem interface
                     var emailCards = messages.Value.Select((msg, index) => new
                     {
                         id = $"email_{index}_{msg.Id?.GetHashCode().ToString("X")}",
@@ -110,13 +154,14 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                         from = msg.From?.EmailAddress?.Name?.Length > 50 ? 
                             msg.From.EmailAddress.Name[..50] + "..." : 
                             msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
-                        fromEmail = GetValidEmailAddress(msg.From?.EmailAddress?.Address),
+                        fromEmail = GetValidEmailAddress(msg.From?.EmailAddress?.Address) ?? "",
                         receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
-                        receivedDateTime = msg.ReceivedDateTime,
+                        receivedDateTime = msg.ReceivedDateTime?.ToString("o"),
                         isRead = msg.IsRead ?? false,
                         importance = msg.Importance?.ToString() ?? "Normal",
                         preview = msg.BodyPreview?.Length > 120 ? msg.BodyPreview[..120] + "..." : msg.BodyPreview ?? "",
                         webLink = msg.WebLink ?? $"https://outlook.office.com/mail/id/{msg.Id}",
+                        matchReason = (string)null, // Only used for search results
                         importanceColor = msg.Importance?.ToString()?.ToLower() switch
                         {
                             "high" => "#ef4444",
@@ -126,14 +171,16 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                         readStatusColor = (msg.IsRead ?? false) ? "#10b981" : "#f59e0b"
                     }).ToList();
 
-                    // Store structured data in kernel data for the system to process
+                    var functionResponse = $"Found {emailCards.Count} recent emails for {userName}.";
+
+                    // Use the old direct approach temporarily to test
                     kernel.Data["EmailCards"] = emailCards;
                     kernel.Data["HasStructuredData"] = "true";
                     kernel.Data["StructuredDataType"] = "emails";
                     kernel.Data["StructuredDataCount"] = emailCards.Count;
+                    kernel.Data["EmailFunctionResponse"] = functionResponse;
 
-                    var filterDescription = BuildFilterDescription(timePeriod, readStatus, importance);
-                    return $"Found {emailCards.Count} recent emails for {userName}.";
+                    return functionResponse;
                 }
             }
 
@@ -142,8 +189,57 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Error accessing emails for user");
             return $"Error accessing emails: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Extract meaningful content from an email message
+    /// </summary>
+    private static string ExtractEmailContent(Message message)
+    {
+        // Try to get full body content first, fall back to preview
+        var content = message.Body?.Content;
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            content = message.BodyPreview;
+        }
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return "No content available";
+        }
+
+        // Clean up HTML if present and limit length for AI processing
+        var cleanContent = System.Text.RegularExpressions.Regex.Replace(content, "<[^>]*>", "");
+        cleanContent = System.Net.WebUtility.HtmlDecode(cleanContent);
+        
+        // Limit to reasonable length for AI processing (about 500 characters per email)
+        if (cleanContent.Length > 500)
+        {
+            cleanContent = cleanContent.Substring(0, 500) + "...";
+        }
+
+        return cleanContent.Trim();
+    }
+
+    /// <summary>
+    /// Create a fallback summary when AI is not available
+    /// </summary>
+    private static string CreateFallbackEmailSummary(IEnumerable<dynamic> emailContents, string userName)
+    {
+        var emailList = emailContents.ToList();
+        var subjects = emailList.Select(e => e.Subject).Where(s => s != "No Subject").Take(3);
+        var senders = emailList.Select(e => e.From).Distinct().Take(3);
+        var unreadCount = emailList.Count(e => !e.IsRead);
+        var highImportanceCount = emailList.Count(e => e.Importance?.ToString()?.ToLower() == "high");
+
+        return $"Here's a summary of your {emailList.Count} recent emails:\n\n" +
+               $"• {unreadCount} unread emails, {highImportanceCount} high importance\n" +
+               $"• Recent emails from: {string.Join(", ", senders)}\n" +
+               $"• Key subjects: {string.Join(", ", subjects)}\n\n" +
+               "The emails cover various topics. Check your inbox for full details.";
     }
 
     [KernelFunction, Description("Create email draft")]
@@ -368,7 +464,7 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
         }
     }
 
-    [KernelFunction, Description("Search emails by content, subject, sender, or keywords. Use this when user asks to 'search emails', 'find emails from [person]', 'emails about [topic]', 'emails containing [text]', etc.")]
+    [KernelFunction, Description("Search emails by content, subject, sender, or keywords. Use this when user asks to 'search emails', 'find emails from [person]', 'emails about [topic]', 'emails containing [text]', etc. For display purposes, use analysisMode=false. For analysis of search results like 'summarize emails from John', use analysisMode=true.")]
     public async Task<string> SearchEmails(Kernel kernel,
         [Description("Search query to find in email content, subject, or sender. Can be keywords, phrases, or specific text")] string searchQuery = null,
         [Description("Search specifically by sender name or email address. Use when user asks 'emails from John' or 'emails from john@company.com'")] string fromSender = null,
@@ -376,24 +472,20 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
         [Description("Time period to search within: 'today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', or number of days")] string timePeriod = null,
         [Description("Maximum number of results (default 5, max 10)")] int maxResults = 5,
         [Description("Include only unread emails in search results")] bool unreadOnly = false,
-        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
+        [Description("Analysis mode: ALWAYS set to true when user asks for summaries or analysis of search results. Set to false for listing/displaying search results. Keywords that trigger true: summarize, summary, analyze, analysis, what about, content overview.")] bool analysisMode = false)
     {
         try
         {
-            var userAccessToken = kernel.Data.TryGetValue("UserAccessToken", out var token) ? token?.ToString() : null;
-            var userName = kernel.Data.TryGetValue("UserName", out var name) ? name?.ToString() : "User";
-
-            if (string.IsNullOrEmpty(userAccessToken))
+            var (success, errorMessage, graphClient, userName) = await GetAuthenticatedGraphClientAsync(kernel);
+            if (!success)
             {
-                return "Unable to search emails - user authentication required.";
+                return errorMessage;
             }
 
             if (string.IsNullOrWhiteSpace(searchQuery) && string.IsNullOrWhiteSpace(fromSender) && string.IsNullOrWhiteSpace(subjectContains) && string.IsNullOrWhiteSpace(timePeriod))
             {
                 return "Please provide a search query, sender, subject, or time period to find emails.";
             }
-
-            var graphClient = await CreateClientAsync(userAccessToken);
 
             // Build filter conditions
             var filters = new List<string>();
@@ -449,20 +541,65 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                 }
             });
 
+            var searchTerm = searchQuery ?? fromSender ?? subjectContains ?? "search criteria";
+
             if (messages?.Value?.Any() == true)
             {
                 if (analysisMode)
                 {
-                    // For analysis mode, return clean summary
-                    var unreadCount = messages.Value.Count(m => !(m.IsRead ?? false));
-                    var highImportanceCount = messages.Value.Count(m => m.Importance?.ToString()?.ToLower() == "high");
-                    
-                    return $"Found {messages.Value.Count} emails matching '{searchQuery}' for {userName}. " +
-                           $"{unreadCount} unread, {highImportanceCount} high importance. " +
-                           $"Top matches from: {string.Join(", ", messages.Value.Take(3).Select(m => m.From?.EmailAddress?.Name ?? "Unknown"))}.";
+                    // For analysis mode, use AI to summarize actual email content
+                    var emailContents = messages.Value.Select(msg => new
+                    {
+                        From = msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
+                        Subject = msg.Subject ?? "No Subject",
+                        ReceivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd") ?? "Unknown",
+                        Content = ExtractEmailContent(msg),
+                        IsRead = msg.IsRead ?? false,
+                        Importance = msg.Importance?.ToString() ?? "Normal",
+                        MatchReason = !string.IsNullOrWhiteSpace(searchQuery) ? "Content/Subject" : 
+                                     !string.IsNullOrWhiteSpace(fromSender) ? "Sender" : 
+                                     !string.IsNullOrWhiteSpace(subjectContains) ? "Subject" : "Search"
+                    }).ToList();
+
+                    // Create a prompt for AI to summarize the search results
+                    var emailSummaryPrompt = $@"Please provide a concise summary of these {emailContents.Count} emails that matched the search for '{searchTerm}'. Focus on the main topics, key information, and actionable items found in the search results:
+
+{string.Join("\n\n", emailContents.Select((email, i) => 
+    $"Email {i + 1}:\n" +
+    $"From: {email.From}\n" +
+    $"Subject: {email.Subject}\n" +
+    $"Date: {email.ReceivedDate}\n" +
+    $"Content: {email.Content}\n" +
+    $"Match: {email.MatchReason}\n" +
+    $"Status: {(email.IsRead ? "Read" : "Unread")}" +
+    (email.Importance != "Normal" ? $"\nImportance: {email.Importance}" : "")))}
+
+Provide a helpful summary that tells the user what these matching emails are about and why they matched the search.";
+
+                    // Use the global kernel to get AI summary
+                    var globalKernel = kernel.Services.GetService<Kernel>();
+                    if (globalKernel != null)
+                    {
+                        try
+                        {
+                            var summaryResult = await globalKernel.InvokePromptAsync(emailSummaryPrompt);
+                            return summaryResult.ToString();
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to generate AI summary for email search results");
+                            // Fallback to simple summary
+                            return CreateFallbackEmailSummary(emailContents.Cast<dynamic>(), userName);
+                        }
+                    }
+                    else
+                    {
+                        return CreateFallbackEmailSummary(emailContents.Cast<dynamic>(), userName);
+                    }
                 }
                 else
                 {
+                    // Create email cards for card display mode - must match React EmailItem interface
                     var emailCards = messages.Value.Select((msg, index) => new
                     {
                         id = $"search_{index}_{msg.Id?.GetHashCode().ToString("X")}",
@@ -470,9 +607,9 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                         from = msg.From?.EmailAddress?.Name?.Length > 50 ? 
                             msg.From.EmailAddress.Name[..50] + "..." : 
                             msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
-                        fromEmail = GetValidEmailAddress(msg.From?.EmailAddress?.Address),
+                        fromEmail = GetValidEmailAddress(msg.From?.EmailAddress?.Address) ?? "",
                         receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
-                        receivedDateTime = msg.ReceivedDateTime,
+                        receivedDateTime = msg.ReceivedDateTime?.ToString("o"),
                         isRead = msg.IsRead ?? false,
                         importance = msg.Importance?.ToString() ?? "Normal",
                         preview = msg.BodyPreview?.Length > 120 ? msg.BodyPreview[..120] + "..." : msg.BodyPreview ?? "",
@@ -489,20 +626,24 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                         readStatusColor = (msg.IsRead ?? false) ? "#10b981" : "#f59e0b"
                     }).ToList();
 
-                    // Store structured data in kernel data for the system to process
+                    var functionResponse = $"Found {emailCards.Count} emails matching '{searchTerm}' for {userName}.";
+
+                    // Use the old direct approach temporarily to test
                     kernel.Data["EmailCards"] = emailCards;
                     kernel.Data["HasStructuredData"] = "true";
                     kernel.Data["StructuredDataType"] = "emails";
                     kernel.Data["StructuredDataCount"] = emailCards.Count;
+                    kernel.Data["EmailFunctionResponse"] = functionResponse;
 
-                    return $"Found {emailCards.Count} emails matching '{searchQuery}' for {userName}.";
+                    return functionResponse;
                 }
             }
 
-            return $"No emails found matching '{searchQuery}' for {userName}.";
+            return $"No emails found matching '{searchTerm}' for {userName}.";
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Error searching emails for user");
             return $"Error searching emails: {ex.Message}";
         }
     }
@@ -766,13 +907,14 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                     from = msg.From?.EmailAddress?.Name?.Length > 50 ? 
                         msg.From.EmailAddress.Name[..50] + "..." : 
                         msg.From?.EmailAddress?.Name ?? msg.From?.EmailAddress?.Address ?? "Unknown",
-                    fromEmail = GetValidEmailAddress(msg.From?.EmailAddress?.Address),
+                    fromEmail = GetValidEmailAddress(msg.From?.EmailAddress?.Address) ?? "",
                     receivedDate = msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown",
-                    receivedDateTime = msg.ReceivedDateTime,
+                    receivedDateTime = msg.ReceivedDateTime?.ToString("o"),
                     isRead = msg.IsRead ?? false,
                     importance = msg.Importance?.ToString() ?? "Normal",
                     preview = msg.BodyPreview?.Length > 120 ? msg.BodyPreview[..120] + "..." : msg.BodyPreview ?? "",
                     webLink = msg.WebLink ?? $"https://outlook.office.com/mail/id/{msg.Id}",
+                    matchReason = (string)null, // Only used for search results
                     importanceColor = msg.Importance?.ToString()?.ToLower() switch
                     {
                         "high" => "#ef4444",
@@ -787,6 +929,7 @@ public class MailPlugin(IGraphService graphService, ILogger<MailPlugin> logger) 
                 kernel.Data["HasStructuredData"] = "true";
                 kernel.Data["StructuredDataType"] = "emails";
                 kernel.Data["StructuredDataCount"] = emailCards.Count;
+                kernel.Data["EmailFunctionResponse"] = $"Found {emailCards.Count} emails from '{senderEmailOrName}' for {userName}.";
 
                 return $"Found {emailCards.Count} emails from '{senderEmailOrName}' for {userName}.";
             }

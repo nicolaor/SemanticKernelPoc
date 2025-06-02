@@ -1,13 +1,20 @@
+using Microsoft.Graph;
 using Microsoft.Graph.Models;
 using Microsoft.SemanticKernel;
 using System.ComponentModel;
+using System.Text.Json;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Helpers;
 
 namespace SemanticKernelPoc.Api.Plugins.Calendar;
 
-public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> logger) : BaseGraphPlugin(graphService, logger)
+public class CalendarPlugin : BaseGraphPlugin
 {
+    public CalendarPlugin(IGraphService graphService, IGraphClientFactory graphClientFactory, ILogger<CalendarPlugin> logger) 
+        : base(graphService, graphClientFactory, logger)
+    {
+    }
+
     private static CalendarEventResponse CreateCalendarEventResponse(Event evt)
     {
         // Parse and format the dates to ensure they're in a format JavaScript can understand
@@ -62,11 +69,11 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
         );
     }
 
-    [KernelFunction, Description("Get the user's upcoming calendar events")]
+    [KernelFunction, Description("Get the user's upcoming calendar events. For display purposes, use analysisMode=false. For summary/analysis requests like 'summarize my calendar', 'what meetings do I have', 'calendar overview', use analysisMode=true.")]
     public async Task<string> GetUpcomingEvents(Kernel kernel,
         [Description("Number of days to look ahead (default 7)")] int days = 7,
         [Description("Maximum number of events to return (default 20)")] int maxEvents = 20,
-        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
+        [Description("Analysis mode: ALWAYS set to true when user asks for summaries, analysis, or 'what meetings do I have'. Set to false for listing/displaying events. Keywords that trigger true: summarize, summary, analyze, analysis, what about, content overview.")] bool analysisMode = false)
     {
         return await ExecuteGraphOperationAsync(
             kernel,
@@ -321,9 +328,9 @@ public class CalendarPlugin(IGraphService graphService, ILogger<CalendarPlugin> 
         );
     }
 
-    [KernelFunction, Description("Get today's calendar events")]
+    [KernelFunction, Description("Get today's calendar events. For display purposes, use analysisMode=false. For summary/analysis requests like 'summarize today's meetings', 'what do I have today', use analysisMode=true.")]
     public async Task<string> GetTodaysEvents(Kernel kernel,
-        [Description("Analysis mode: set to true for summarization/analysis requests to get full content, false for card display (default false)")] bool analysisMode = false)
+        [Description("Analysis mode: ALWAYS set to true when user asks for summaries, analysis, or 'what meetings do I have'. Set to false for listing/displaying events. Keywords that trigger true: summarize, summary, analyze, analysis, what about, content overview.")] bool analysisMode = false)
     {
         return await ExecuteGraphOperationAsync(
             kernel,

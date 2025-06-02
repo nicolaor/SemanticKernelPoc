@@ -4,8 +4,13 @@ using SemanticKernelPoc.Api.Services.Graph;
 
 namespace SemanticKernelPoc.Api.Plugins.OneDrive;
 
-public class OneDrivePlugin(IGraphService graphService, ILogger<OneDrivePlugin> logger) : BaseGraphPlugin(graphService, logger)
+public class OneDrivePlugin : BaseGraphPlugin
 {
+    public OneDrivePlugin(IGraphService graphService, IGraphClientFactory graphClientFactory, ILogger<OneDrivePlugin> logger) 
+        : base(graphService, graphClientFactory, logger)
+    {
+    }
+
     [KernelFunction, Description("Get basic OneDrive information")]
     public async Task<string> GetOneDriveInfo(Kernel kernel)
     {
