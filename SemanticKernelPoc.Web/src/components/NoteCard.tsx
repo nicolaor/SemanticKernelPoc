@@ -223,7 +223,15 @@ const NoteItem: React.FC<{ note: TaskItem; index: number }> = React.memo(({ note
 
               {/* Match Reason for Search Results */}
               {note.matchReason && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-yellow-100 text-yellow-700" title={`Search match found in: ${note.matchReason}`}>
+                <span 
+                  className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium"
+                  style={{
+                    backgroundColor: "#3b82f6" + "20", // blue-500 with 20% opacity
+                    color: "#3b82f6", // blue-500
+                    border: "1px solid " + "#3b82f6" + "40", // blue-500 with 40% opacity
+                  }}
+                  title={`Search match found in: ${note.matchReason}`}
+                >
                   <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
                   </svg>
