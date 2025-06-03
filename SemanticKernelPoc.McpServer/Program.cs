@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using SemanticKernelPoc.McpServer.Services;
+using SemanticKernelPoc.McpServer.Tools;
 
 namespace SemanticKernelPoc.McpServer;
 
@@ -21,6 +22,9 @@ class Program
         // Add our SharePoint search service
         builder.Services.AddHttpClient();
         builder.Services.AddScoped<ISharePointSearchService, SharePointSearchService>();
+        
+        // Register the SharePointSearchTool for dependency injection
+        builder.Services.AddScoped<SharePointSearchTool>();
         
         // Configure MCP server with HTTP/SSE transport for multi-client support
         builder.Services

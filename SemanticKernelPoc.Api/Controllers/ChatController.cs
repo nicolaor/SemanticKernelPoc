@@ -488,26 +488,102 @@ public class ChatController(
                             return $"❌ SharePoint search failed: MCP tool {toolName} returned no data. Please check your SharePoint access and try again.";
                         }
                         
-                        var resultString = result.ToString();
+                        // *** FIXED: Properly extract data from CallToolResponse ***
+                        string resultString = null;
+                        
+                        _logger.LogInformation("📝 Response type: {Type}", result.GetType().Name);
+                        
+                        // Try to extract the actual response content from the CallToolResponse object
+                        try
+                        {
+                            // Look for Content property first
+                            var contentProperty = result.GetType().GetProperty("Content");
+                            if (contentProperty != null)
+                            {
+                                var contentValue = contentProperty.GetValue(result);
+                                if (contentValue != null)
+                                {
+                                    // Check if Content has Text property (common MCP pattern)
+                                    var textProperty = contentValue.GetType().GetProperty("Text");
+                                    if (textProperty != null)
+                                    {
+                                        resultString = textProperty.GetValue(contentValue)?.ToString();
+                                        _logger.LogInformation("✅ Extracted data from CallToolResponse.Content.Text");
+                                    }
+                                    else
+                                    {
+                                        // If no Text property, serialize the content object
+                                        resultString = JsonSerializer.Serialize(contentValue);
+                                        _logger.LogInformation("✅ Serialized CallToolResponse.Content object");
+                                    }
+                                }
+                            }
+                            
+                            // If no Content property, look for other common response properties
+                            if (string.IsNullOrEmpty(resultString))
+                            {
+                                var resultProperty = result.GetType().GetProperty("Result");
+                                if (resultProperty != null)
+                                {
+                                    var resultValue = resultProperty.GetValue(result);
+                                    resultString = resultValue?.ToString();
+                                    _logger.LogInformation("✅ Extracted data from CallToolResponse.Result");
+                                }
+                            }
+                            
+                            // If still no data, look for Data property
+                            if (string.IsNullOrEmpty(resultString))
+                            {
+                                var dataProperty = result.GetType().GetProperty("Data");
+                                if (dataProperty != null)
+                                {
+                                    var dataValue = dataProperty.GetValue(result);
+                                    if (dataValue != null)
+                                    {
+                                        resultString = JsonSerializer.Serialize(dataValue);
+                                        _logger.LogInformation("✅ Serialized CallToolResponse.Data");
+                                    }
+                                }
+                            }
+                            
+                            // If still no data, try serializing the entire response object
+                            if (string.IsNullOrEmpty(resultString))
+                            {
+                                resultString = JsonSerializer.Serialize(result);
+                                _logger.LogInformation("✅ Serialized entire CallToolResponse object");
+                            }
+                        }
+                        catch (Exception extractEx)
+                        {
+                            _logger.LogWarning(extractEx, "⚠️ Failed to extract data from CallToolResponse, falling back to ToString()");
+                            resultString = result.ToString();
+                        }
+                        
                         var resultLength = resultString?.Length ?? 0;
                         
                         _logger.LogInformation("📄 Response length: {Length} characters", resultLength);
-                        _logger.LogInformation("📝 Response type: {Type}", result.GetType().Name);
+                        _logger.LogInformation("🔍 === EXTRACTED RESPONSE DATA ===");
                         
                         if (resultLength == 0)
                         {
-                            _logger.LogWarning("⚠️ MCP tool returned empty response");
+                            _logger.LogWarning("⚠️ MCP tool returned empty response after extraction");
                             return $"🔍 No SharePoint sites found matching your query '{query}'. Try a different search term or check your SharePoint access.";
                         }
                         
                         if (resultLength < 50)
                         {
-                            _logger.LogInformation("📄 Short response (likely error): '{Response}'", resultString);
+                            _logger.LogInformation("📄 Short response: '{Response}'", resultString);
+                        }
+                        else if (resultLength < 500)
+                        {
+                            _logger.LogInformation("📄 Full response: {Response}", resultString);
                         }
                         else
                         {
-                            _logger.LogInformation("📄 Response preview (first 200 chars): '{Preview}...'", 
-                                resultString.Length > 200 ? resultString.Substring(0, 200) : resultString);
+                            _logger.LogInformation("📄 Response preview (first 500 chars): '{Preview}...'", 
+                                resultString.Length > 500 ? resultString.Substring(0, 500) : resultString);
+                            _logger.LogInformation("📄 Response preview (last 200 chars): '...{End}'", 
+                                resultString.Length > 200 ? resultString.Substring(resultString.Length - 200) : resultString);
                         }
                         
                         // Check for common error patterns
@@ -536,6 +612,20 @@ public class ChatController(
                                     if (arrayLength == 0)
                                     {
                                         return $"🔍 No SharePoint sites found for query '{query}'. The search completed successfully but returned no results.";
+                                    }
+                                }
+                                else if (jsonDoc.RootElement.TryGetProperty("sites", out var sitesElement) && sitesElement.ValueKind == JsonValueKind.Array)
+                                {
+                                    var arrayLength = sitesElement.GetArrayLength();
+                                    _logger.LogInformation("📊 JSON 'sites' array contains {Count} items", arrayLength);
+                                    
+                                    if (arrayLength == 0)
+                                    {
+                                        return $"🔍 No SharePoint sites found for query '{query}'. The search completed successfully but returned no results.";
+                                    }
+                                    else
+                                    {
+                                        _logger.LogInformation("🎉 SUCCESS: Found {Count} SharePoint sites!", arrayLength);
                                     }
                                 }
                                 else if (jsonDoc.RootElement.TryGetProperty("value", out var valueElement) && valueElement.ValueKind == JsonValueKind.Array)

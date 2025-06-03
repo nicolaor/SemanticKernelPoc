@@ -1101,7 +1101,8 @@ public class SharePointSearchService : ISharePointSearchService
             {
                 _logger.LogInformation("🔄 Converting search results to JsonElement...");
                 var jsonString = JsonSerializer.Serialize(searchResults);
-                _logger.LogInformation("📋 Serialized JSON for parsing: {JsonString}", jsonString);
+                _logger.LogInformation("📋 Serialized JSON for parsing (length: {Length}): {JsonString}", 
+                    jsonString.Length, jsonString.Length > 1000 ? jsonString[..1000] + "..." : jsonString);
                 jsonElement = JsonSerializer.Deserialize<JsonElement>(jsonString);
                 _logger.LogInformation("✅ Converted to JsonElement successfully");
             }
@@ -1138,15 +1139,38 @@ public class SharePointSearchService : ISharePointSearchService
             var relevantResultsProps = relevantResults.EnumerateObject().Select(p => p.Name).ToList();
             _logger.LogInformation("🔍 RelevantResults properties: [{Properties}]", string.Join(", ", relevantResultsProps));
 
+            // *** FIXED: Look for "Rows" instead of "Table" ***
             if (!relevantResults.TryGetProperty("Table", out JsonElement table))
             {
-                _logger.LogWarning("❌ No Table found in search response");
-                _logger.LogWarning("🔍 Available RelevantResults properties: [{Properties}]", 
-                    string.Join(", ", relevantResults.EnumerateObject().Select(p => p.Name)));
-                if (relevantResults.TryGetProperty("Rows", out var rowsElement))
+                _logger.LogWarning("❌ No Table found in search response, checking for Rows directly...");
+                
+                // Try to find Rows directly in RelevantResults
+                if (!relevantResults.TryGetProperty("Rows", out JsonElement rowsElement))
                 {
-                    _logger.LogWarning("🔍 Rows element type: {ValueKind}", rowsElement.ValueKind);
+                    _logger.LogWarning("❌ No Rows found either in search response");
+                    _logger.LogWarning("🔍 Available RelevantResults properties: [{Properties}]", 
+                        string.Join(", ", relevantResults.EnumerateObject().Select(p => p.Name)));
+                    return response;
                 }
+                
+                _logger.LogInformation("✅ Found Rows directly in RelevantResults");
+                table = rowsElement;
+            }
+            else
+            {
+                _logger.LogInformation("✅ Found Table in RelevantResults");
+                
+                // If we found Table, check if it has Rows inside
+                if (table.TryGetProperty("Rows", out JsonElement nestedRows))
+                {
+                    _logger.LogInformation("✅ Found Rows inside Table");
+                    table = nestedRows;
+                }
+            }
+
+            if (table.ValueKind != JsonValueKind.Array)
+            {
+                _logger.LogError("❌ Rows/Table is not an array. Value kind: {ValueKind}", table.ValueKind);
                 return response;
             }
 
