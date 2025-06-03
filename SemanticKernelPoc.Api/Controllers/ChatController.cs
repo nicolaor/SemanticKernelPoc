@@ -20,6 +20,10 @@ using System.ComponentModel;
 using System.Text;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+using SemanticKernelPoc.Api.Services.Shared;
+using Microsoft.Extensions.Logging;
+using System.Reflection;
+using System.Dynamic;
 using ChatMessage = SemanticKernelPoc.Api.Models.ChatMessage;
 using ChatResponse = SemanticKernelPoc.Api.Models.ChatResponse;
 
@@ -31,11 +35,17 @@ namespace SemanticKernelPoc.Api.Controllers;
 public class ChatController(
     ILogger<ChatController> logger,
     IConversationMemoryService conversationMemory,
-    IConfiguration configuration) : ControllerBase
+    IConfiguration configuration,
+    ICardBuilderService cardBuilder,
+    IAnalysisModeService analysisMode,
+    ITextProcessingService textProcessor) : ControllerBase
 {
     private readonly ILogger<ChatController> _logger = logger;
     private readonly IConversationMemoryService _conversationMemory = conversationMemory;
     private readonly IConfiguration _configuration = configuration;
+    private readonly ICardBuilderService _cardBuilder = cardBuilder;
+    private readonly IAnalysisModeService _analysisMode = analysisMode;
+    private readonly ITextProcessingService _textProcessor = textProcessor;
 
     [HttpPost]
     public async Task<ActionResult<ChatResponse>> PostMessage([FromBody] ChatMessage chatMessage)
@@ -82,6 +92,56 @@ public class ChatController(
             _logger.LogInformation("=== AI RESPONSE ANALYSIS START ===");
             _logger.LogInformation("AI Response Length: {Length} characters", aiResponse.Length);
             _logger.LogInformation("AI Response Content: {Response}", aiResponse);
+            
+            // *** NEW: CHECK FOR SHAREPOINT STRUCTURED DATA IN AI RESPONSE ***
+            // Check if the AI response contains SharePoint structured data from MCP tools
+            _logger.LogInformation("🔍 Checking AI response for SharePoint structured data...");
+            _logger.LogInformation("🔍 AI Response Preview: '{Preview}'", aiResponse.Length > 100 ? aiResponse.Substring(0, 100) + "..." : aiResponse);
+            _logger.LogInformation("🔍 Looking for '__sharepoint_structured_data' in response...");
+            
+            if (aiResponse.Contains("__sharepoint_structured_data"))
+            {
+                _logger.LogInformation("🔍 Detected SharePoint structured data in AI response, processing...");
+                
+                try
+                {
+                    var jsonDoc = JsonDocument.Parse(aiResponse);
+                    if (jsonDoc.RootElement.TryGetProperty("__sharepoint_structured_data", out var structuredFlag) && 
+                        structuredFlag.GetBoolean() &&
+                        jsonDoc.RootElement.TryGetProperty("sites", out var sitesElement))
+                    {
+                        _logger.LogInformation("✅ Found valid SharePoint structured data, converting to cards...");
+                        
+                        var sites = JsonSerializer.Deserialize<object[]>(sitesElement.GetRawText());
+                        var message = jsonDoc.RootElement.TryGetProperty("message", out var messageElement) 
+                            ? messageElement.GetString() : $"Found {sites.Length} SharePoint sites.";
+                        var totalCount = jsonDoc.RootElement.TryGetProperty("totalCount", out var countElement) 
+                            ? countElement.GetInt32() : sites.Length;
+                        
+                        // Set structured data in kernel for card display
+                        kernel.Data["HasStructuredData"] = "true";
+                        kernel.Data["StructuredDataType"] = "sharepoint";
+                        kernel.Data["StructuredDataCount"] = sites.Length;
+                        kernel.Data["SharePointCards"] = sites;
+                        kernel.Data["SharePointFunctionResponse"] = message;
+                        
+                        _logger.LogInformation("🎯 Successfully set SharePoint card data: {Count} sites", sites.Length);
+                        
+                        // Override the AI response with a clean message
+                        aiResponse = message ?? $"Found {sites.Length} SharePoint sites.";
+                    }
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "⚠️ Failed to parse SharePoint structured data from AI response");
+                }
+            }
+            else
+            {
+                _logger.LogInformation("❌ No '__sharepoint_structured_data' found in AI response");
+                _logger.LogInformation("🔍 AI Response contains: {Contains}", 
+                    aiResponse.Contains("SharePoint") ? "SharePoint keyword" : "No SharePoint keyword");
+            }
             
             // Check for structured data in kernel instead of parsing the AI response
             ChatResponse processedResponse;
@@ -350,7 +410,7 @@ public class ChatController(
                         _logger.LogInformation("📝 Processing MCP tool: {ToolName} - {Description}", toolName, toolDescription);
                         
                         // Create a kernel function that wraps the MCP tool
-                        var kernelFunction = CreateKernelFunctionFromMcpTool(tool, mcpClient, userAccessToken, toolIndex);
+                        var kernelFunction = CreateKernelFunctionFromMcpTool(tool, mcpClient, userAccessToken, toolIndex, kernel);
                         kernelFunctions.Add(kernelFunction);
                         
                         _logger.LogInformation("✅ Created kernel function for MCP tool: {ToolName}", toolName);
@@ -386,7 +446,7 @@ public class ChatController(
         }
     }
 
-    private KernelFunction CreateKernelFunctionFromMcpTool(object tool, IMcpClient mcpClient, string userAccessToken, int toolIndex)
+    private KernelFunction CreateKernelFunctionFromMcpTool(object tool, IMcpClient mcpClient, string userAccessToken, int toolIndex, Kernel kernel)
     {
         // Extract tool properties using proper type access instead of reflection
         var toolName = tool.GetType().GetProperty("Name")?.GetValue(tool)?.ToString() ?? $"McpTool{toolIndex}";
@@ -396,11 +456,11 @@ public class ChatController(
         
         // Create the actual kernel function that calls the MCP tool
         return KernelFunctionFactory.CreateFromMethod(
-            ([Description("Search query")] string query = "", 
+            async ([Description("Search query")] string query = "", 
              [Description("Number of results")] int count = 5, 
              [Description("List name")] string listName = "") =>
             {
-                return Task.Run(async () =>
+                return await Task.Run(async () =>
                 {
                     try
                     {
@@ -452,6 +512,15 @@ public class ChatController(
                         parameters["limit"] = count;        // Alternative parameter name
                         parameters["maxResults"] = count;   // Alternative parameter name
                         
+                        // *** NEW: ADD RESPONSE MODE BASED ON ANALYSIS DETECTION ***
+                        // Determine if this is an analysis request based on the query context
+                        var isAnalysisRequest = IsAnalysisRequest(query);
+                        var responseMode = isAnalysisRequest ? "analysis" : "card";
+                        parameters["responseMode"] = responseMode;
+                        
+                        _logger.LogInformation("🎯 RESPONSE MODE DETECTION: Query='{Query}' -> Mode='{ResponseMode}' (Analysis={IsAnalysis})", 
+                            query, responseMode, isAnalysisRequest);
+                        
                         _logger.LogInformation("📤 FINAL PARAMETERS being sent to MCP server:");
                         foreach (var param in parameters)
                         {
@@ -477,86 +546,119 @@ public class ChatController(
                         // Detailed response analysis
                         _logger.LogInformation("📥 === MCP RESPONSE ANALYSIS ===");
                         
-                        if (result == null)
+                        var resultString = result.ToString();
+                        
+                        // Enhanced MCP response data extraction
+                        if (result != null && result.GetType().Name == "CallToolResponse")
                         {
-                            _logger.LogError("❌ CRITICAL: MCP tool returned NULL result");
-                            _logger.LogError("   This could indicate:");
-                            _logger.LogError("   - MCP server error");
-                            _logger.LogError("   - SharePoint authentication failure");
-                            _logger.LogError("   - Invalid parameters");
-                            _logger.LogError("   - SharePoint service unavailable");
-                            return $"❌ SharePoint search failed: MCP tool {toolName} returned no data. Please check your SharePoint access and try again.";
-                        }
-                        
-                        // *** FIXED: Properly extract data from CallToolResponse ***
-                        string resultString = null;
-                        
-                        _logger.LogInformation("📝 Response type: {Type}", result.GetType().Name);
-                        
-                        // Try to extract the actual response content from the CallToolResponse object
-                        try
-                        {
-                            // Look for Content property first
-                            var contentProperty = result.GetType().GetProperty("Content");
-                            if (contentProperty != null)
+                            try
                             {
-                                var contentValue = contentProperty.GetValue(result);
-                                if (contentValue != null)
+                                _logger.LogInformation("🔍 Attempting to extract data from CallToolResponse object...");
+                                
+                                // First try to get Content property (most common)
+                                var contentProperty = result.GetType().GetProperty("Content");
+                                if (contentProperty != null)
                                 {
-                                    // Check if Content has Text property (common MCP pattern)
-                                    var textProperty = contentValue.GetType().GetProperty("Text");
-                                    if (textProperty != null)
+                                    var contentValue = contentProperty.GetValue(result);
+                                    if (contentValue != null)
                                     {
-                                        resultString = textProperty.GetValue(contentValue)?.ToString();
-                                        _logger.LogInformation("✅ Extracted data from CallToolResponse.Content.Text");
-                                    }
-                                    else
-                                    {
-                                        // If no Text property, serialize the content object
-                                        resultString = JsonSerializer.Serialize(contentValue);
-                                        _logger.LogInformation("✅ Serialized CallToolResponse.Content object");
+                                        _logger.LogInformation("📋 Content property type: {Type}", contentValue.GetType().Name);
+                                        
+                                        // Check if Content is a collection/list of Content objects
+                                        if (contentValue is System.Collections.IEnumerable contentCollection && 
+                                            !(contentValue is string))
+                                        {
+                                            _logger.LogInformation("🔍 Content is a collection, extracting individual items...");
+                                            
+                                            var contentItems = new List<string>();
+                                            foreach (var item in contentCollection)
+                                            {
+                                                if (item != null)
+                                                {
+                                                    // Try to get Text property from Content object
+                                                    var textProperty = item.GetType().GetProperty("Text");
+                                                    if (textProperty != null)
+                                                    {
+                                                        var textValue = textProperty.GetValue(item);
+                                                        if (textValue != null)
+                                                        {
+                                                            contentItems.Add(textValue.ToString());
+                                                            _logger.LogInformation("✅ Extracted text from Content item: {Length} chars", textValue.ToString().Length);
+                                                        }
+                                                    }
+                                                    // If no Text property, try serializing the entire item
+                                                    else
+                                                    {
+                                                        try
+                                                        {
+                                                            var serializedItem = JsonSerializer.Serialize(item);
+                                                            contentItems.Add(serializedItem);
+                                                            _logger.LogInformation("✅ Serialized Content item: {Length} chars", serializedItem.Length);
+                                                        }
+                                                        catch
+                                                        {
+                                                            contentItems.Add(item.ToString());
+                                                            _logger.LogInformation("⚠️ Used ToString() for Content item");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            if (contentItems.Any())
+                                            {
+                                                // Join all content items (usually just one)
+                                                resultString = string.Join("\n", contentItems);
+                                                _logger.LogInformation("✅ Extracted {Count} content items from CallToolResponse.Content", contentItems.Count);
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // Content is not a collection, use it directly
+                                            resultString = contentValue.ToString();
+                                            _logger.LogInformation("✅ Extracted data directly from CallToolResponse.Content");
+                                        }
                                     }
                                 }
-                            }
-                            
-                            // If no Content property, look for other common response properties
-                            if (string.IsNullOrEmpty(resultString))
-                            {
-                                var resultProperty = result.GetType().GetProperty("Result");
-                                if (resultProperty != null)
+                                
+                                // If no Content property, look for other common response properties
+                                if (string.IsNullOrEmpty(resultString))
                                 {
-                                    var resultValue = resultProperty.GetValue(result);
-                                    resultString = resultValue?.ToString();
-                                    _logger.LogInformation("✅ Extracted data from CallToolResponse.Result");
-                                }
-                            }
-                            
-                            // If still no data, look for Data property
-                            if (string.IsNullOrEmpty(resultString))
-                            {
-                                var dataProperty = result.GetType().GetProperty("Data");
-                                if (dataProperty != null)
-                                {
-                                    var dataValue = dataProperty.GetValue(result);
-                                    if (dataValue != null)
+                                    var resultProperty = result.GetType().GetProperty("Result");
+                                    if (resultProperty != null)
                                     {
-                                        resultString = JsonSerializer.Serialize(dataValue);
-                                        _logger.LogInformation("✅ Serialized CallToolResponse.Data");
+                                        var resultValue = resultProperty.GetValue(result);
+                                        resultString = resultValue?.ToString();
+                                        _logger.LogInformation("✅ Extracted data from CallToolResponse.Result");
                                     }
                                 }
+                                
+                                // If still no data, look for Data property
+                                if (string.IsNullOrEmpty(resultString))
+                                {
+                                    var dataProperty = result.GetType().GetProperty("Data");
+                                    if (dataProperty != null)
+                                    {
+                                        var dataValue = dataProperty.GetValue(result);
+                                        if (dataValue != null)
+                                        {
+                                            resultString = JsonSerializer.Serialize(dataValue);
+                                            _logger.LogInformation("✅ Serialized CallToolResponse.Data");
+                                        }
+                                    }
+                                }
+                                
+                                // If still no data, try serializing the entire response object
+                                if (string.IsNullOrEmpty(resultString))
+                                {
+                                    resultString = JsonSerializer.Serialize(result);
+                                    _logger.LogInformation("✅ Serialized entire CallToolResponse object");
+                                }
                             }
-                            
-                            // If still no data, try serializing the entire response object
-                            if (string.IsNullOrEmpty(resultString))
+                            catch (Exception extractEx)
                             {
-                                resultString = JsonSerializer.Serialize(result);
-                                _logger.LogInformation("✅ Serialized entire CallToolResponse object");
+                                _logger.LogWarning(extractEx, "⚠️ Failed to extract data from CallToolResponse, falling back to ToString()");
+                                resultString = result.ToString();
                             }
-                        }
-                        catch (Exception extractEx)
-                        {
-                            _logger.LogWarning(extractEx, "⚠️ Failed to extract data from CallToolResponse, falling back to ToString()");
-                            resultString = result.ToString();
                         }
                         
                         var resultLength = resultString?.Length ?? 0;
@@ -595,53 +697,51 @@ public class ChatController(
                             return $"❌ SharePoint search error: {resultString}";
                         }
                         
-                        // Check if response looks like JSON data
-                        if (resultString.TrimStart().StartsWith("{") || resultString.TrimStart().StartsWith("["))
+                        // === NEW: SharePoint-specific response formatting ===
+                        // Check if this is a SharePoint tool response and apply appropriate formatting
+                        if (IsSharePointTool(toolName))
                         {
-                            _logger.LogInformation("✅ Response appears to be JSON data - likely successful");
+                            _logger.LogInformation("🔍 Detected SharePoint tool response, checking for structured data...");
                             
-                            // Try to parse and count results
+                            // Try to parse the JSON response from SharePoint MCP tool
                             try
                             {
                                 var jsonDoc = JsonDocument.Parse(resultString);
-                                if (jsonDoc.RootElement.ValueKind == JsonValueKind.Array)
+                                if (jsonDoc.RootElement.TryGetProperty("success", out var successElement) && 
+                                    successElement.GetBoolean() &&
+                                    jsonDoc.RootElement.TryGetProperty("sites", out var sitesElement))
                                 {
-                                    var arrayLength = jsonDoc.RootElement.GetArrayLength();
-                                    _logger.LogInformation("📊 JSON array contains {Count} items", arrayLength);
+                                    _logger.LogInformation("🎯 Found SharePoint sites data in MCP response, setting kernel data directly...");
                                     
-                                    if (arrayLength == 0)
-                                    {
-                                        return $"🔍 No SharePoint sites found for query '{query}'. The search completed successfully but returned no results.";
-                                    }
+                                    var sites = JsonSerializer.Deserialize<object[]>(sitesElement.GetRawText());
+                                    var message = jsonDoc.RootElement.TryGetProperty("message", out var messageElement) 
+                                        ? messageElement.GetString() : $"Found {sites.Length} SharePoint sites.";
+                                    var totalCount = jsonDoc.RootElement.TryGetProperty("totalCount", out var countElement) 
+                                        ? countElement.GetInt32() : sites.Length;
+                                    
+                                    _logger.LogInformation("🎯 Prepared SharePoint structured data: {Count} sites, Message: '{Message}'", sites.Length, message);
+                                    
+                                    // *** DIRECTLY SET KERNEL DATA FOR SHAREPOINT CARDS ***
+                                    // This will be detected in the main response processing
+                                    kernel.Data["HasStructuredData"] = "true";
+                                    kernel.Data["StructuredDataType"] = "sharepoint";
+                                    kernel.Data["StructuredDataCount"] = sites.Length;
+                                    kernel.Data["SharePointCards"] = sites;
+                                    kernel.Data["SharePointFunctionResponse"] = message;
+                                    
+                                    _logger.LogInformation("✅ Successfully set SharePoint card data in kernel: {Count} sites", sites.Length);
+                                    
+                                    // Return a simple response that the AI can use
+                                    return message ?? $"Found {sites.Length} SharePoint sites.";
                                 }
-                                else if (jsonDoc.RootElement.TryGetProperty("sites", out var sitesElement) && sitesElement.ValueKind == JsonValueKind.Array)
+                                else
                                 {
-                                    var arrayLength = sitesElement.GetArrayLength();
-                                    _logger.LogInformation("📊 JSON 'sites' array contains {Count} items", arrayLength);
-                                    
-                                    if (arrayLength == 0)
-                                    {
-                                        return $"🔍 No SharePoint sites found for query '{query}'. The search completed successfully but returned no results.";
-                                    }
-                                    else
-                                    {
-                                        _logger.LogInformation("🎉 SUCCESS: Found {Count} SharePoint sites!", arrayLength);
-                                    }
-                                }
-                                else if (jsonDoc.RootElement.TryGetProperty("value", out var valueElement) && valueElement.ValueKind == JsonValueKind.Array)
-                                {
-                                    var arrayLength = valueElement.GetArrayLength();
-                                    _logger.LogInformation("📊 JSON 'value' array contains {Count} items", arrayLength);
-                                    
-                                    if (arrayLength == 0)
-                                    {
-                                        return $"🔍 No SharePoint sites found for query '{query}'. The search completed successfully but returned no results.";
-                                    }
+                                    _logger.LogInformation("⚠️ SharePoint MCP response doesn't contain expected structure");
                                 }
                             }
                             catch (JsonException ex)
                             {
-                                _logger.LogWarning(ex, "⚠️ Failed to parse response as JSON, treating as plain text");
+                                _logger.LogWarning(ex, "⚠️ Failed to parse SharePoint MCP response as JSON");
                             }
                         }
                         
@@ -737,7 +837,14 @@ public class ChatController(
     {
         return $@"You are an intelligent assistant helping {userName} with their Microsoft 365 tasks and data.
 
-CRITICAL: YOU MUST CALL FUNCTIONS - DO NOT GIVE GENERIC RESPONSES!
+CRITICAL RULE: NEVER MAKE UP DATA - ONLY USE ACTUAL FUNCTION RESULTS!
+
+SHAREPOINT DATA RULES:
+- ALWAYS call SharePoint functions when users ask for SharePoint sites
+- NEVER generate fake site names like 'Marketing Team Collaboration' or 'Project Management Hub' 
+- ONLY use the EXACT site titles, URLs, and descriptions returned by the SharePoint functions
+- If SharePoint functions return real data like 'nirtest20250527b' or 'test20250527a', use those EXACT names
+- If functions return empty results, say 'No SharePoint sites found' - do NOT make up examples
 
 MANDATORY FUNCTION CALLING RULES:
 
@@ -753,6 +860,13 @@ MANDATORY FUNCTION CALLING RULES:
    - User: ""my recent sharepoint sites"" → MUST call SharePoint function (any available)
    
    ALWAYS try SharePoint functions when users mention: sharepoint, sites, collaboration, documents, teams
+
+   CRITICAL: WHEN SHAREPOINT FUNCTIONS RETURN DATA:
+   - You MUST use the EXACT site names, URLs, and data returned by the function
+   - NEVER substitute with generic examples or made-up data
+   - If the function returns 'nirtest20250527b - MyPrivateChannel', use that EXACT title
+   - If the function returns 'https://rnico.sharepoint.com/sites/test20250527a', use that EXACT URL
+   - Present the data as returned by the function, do not modify or improve it
 
 2. TASK/TODO QUERIES - ALWAYS use ToDoPlugin functions for:
    - ""my tasks"", ""show tasks"", ""get tasks"", ""task list"", ""to-do"", ""todos""
@@ -783,10 +897,18 @@ DEBUGGING NOTES:
 - SharePoint MCP functions should be available and will be called automatically
 - If SharePoint search returns no results, that's normal feedback - don't assume the function failed
 - Always attempt function calls first, even if you're unsure about the data
+- When functions return data, USE THAT EXACT DATA - never substitute with examples
+
+ABSOLUTELY FORBIDDEN:
+- Making up SharePoint site names like 'Marketing Team Collaboration', 'Project Management Hub', 'HR Resources'
+- Creating fake URLs like 'https://yourorganization.sharepoint.com/sites/marketing'
+- Generating example data when real function results are available
+- Ignoring function results and providing generic responses
 
 NEVER say ""I cannot access"" or ""I don't have the ability"" - these functions ARE available.
 ALWAYS attempt to call the appropriate function first.
 If a function call fails, THEN explain the error from the function result.
+NEVER make up data when real function results are available.
 
 When users ask for data, you MUST call the relevant functions to retrieve actual data.
 Do not make assumptions or provide generic responses without calling functions.
@@ -843,6 +965,48 @@ Always be helpful, accurate, and call the appropriate functions to fulfill user 
         {
             _logger.LogError(ex, "Error getting user sessions");
             return StatusCode(500, "Error retrieving sessions");
+        }
+    }
+
+    private bool IsSharePointTool(string toolName)
+    {
+        // Implement the logic to determine if a tool is a SharePoint tool
+        // This is a placeholder and should be replaced with the actual implementation
+        return toolName.Contains("SharePoint", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsAnalysisRequest(string query)
+    {
+        if (string.IsNullOrEmpty(query)) return false;
+        
+        var queryLower = query.ToLower();
+        
+        // Check for analysis keywords similar to ToDoPlugin pattern
+        var analysisKeywords = new[]
+        {
+            "summarize", "summary", "analyze", "analysis", "what about", "content overview",
+            "which site", "what should i", "recommend", "priority", "prioritize", "tackle first",
+            "focus on", "start with", "most important", "urgent", "advice", "suggest",
+            "help me decide", "what to do", "compare", "evaluate", "assess", "review",
+            "insights", "patterns", "trends", "overview", "breakdown", "deep dive"
+        };
+        
+        return analysisKeywords.Any(keyword => queryLower.Contains(keyword));
+    }
+
+    private async Task<string> ProcessSharePointResponse(Kernel kernel, string resultString, string toolName, string query, bool isAnalysisMode)
+    {
+        // Implement the logic to process a SharePoint response based on the analysis mode
+        // This is a placeholder and should be replaced with the actual implementation
+        if (isAnalysisMode)
+        {
+            // Analysis mode logic
+            return $"Analysis mode response for {toolName} with query '{query}'";
+        }
+        else
+        {
+            // Listing mode logic
+            return $"Listing mode response for {toolName} with query '{query}'";
         }
     }
 }
