@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using SemanticKernelPoc.Api.Models;
 using SemanticKernelPoc.Api.Plugins.Calendar;
@@ -10,20 +9,14 @@ using SemanticKernelPoc.Api.Plugins.OneDrive;
 using SemanticKernelPoc.Api.Plugins.ToDo;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
-using Microsoft.Identity.Web;
 using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
-using Microsoft.Graph;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.ComponentModel;
 using System.Text;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using SemanticKernelPoc.Api.Services.Shared;
-using Microsoft.Extensions.Logging;
-using System.Reflection;
-using System.Dynamic;
 using ChatMessage = SemanticKernelPoc.Api.Models.ChatMessage;
 using ChatResponse = SemanticKernelPoc.Api.Models.ChatResponse;
 
@@ -190,12 +183,20 @@ public class ChatController(
     {
         var builder = Kernel.CreateBuilder();
 
-        // Add AI service
-        var openAiKey = _configuration["AzureOpenAI:ApiKey"];
-        var openAiEndpoint = _configuration["AzureOpenAI:Endpoint"];
-        var openAiModel = _configuration["AzureOpenAI:DeploymentName"];
-
-        builder.AddAzureOpenAIChatCompletion(openAiModel, openAiEndpoint, openAiKey);
+        // Add AI service based on configuration
+        var useAzureOpenAI = _configuration.GetValue<bool>("SemanticKernel:UseAzureOpenAI");
+        var apiKey = _configuration["SemanticKernel:ApiKey"];
+        var modelOrDeployment = _configuration["SemanticKernel:DeploymentOrModelId"];
+        
+        if (useAzureOpenAI)
+        {
+            var endpoint = _configuration["SemanticKernel:Endpoint"];
+            builder.AddAzureOpenAIChatCompletion(modelOrDeployment, endpoint, apiKey);
+        }
+        else
+        {
+            builder.AddOpenAIChatCompletion(modelOrDeployment, apiKey);
+        }
 
         var kernel = builder.Build();
 

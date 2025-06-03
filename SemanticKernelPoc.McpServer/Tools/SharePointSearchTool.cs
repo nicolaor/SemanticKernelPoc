@@ -248,16 +248,9 @@ public class SharePointSearchTool
         };
     }
 
-    private string GetFormattedDate(string dateValue, string format)
+    private string GetFormattedDate(DateTime dateValue, string format)
     {
-        if (string.IsNullOrEmpty(dateValue)) return "Unknown";
-        
-        if (DateTime.TryParse(dateValue, out var date))
-        {
-            return date.ToString(format);
-        }
-        
-        return dateValue;
+        return dateValue.ToString(format);
     }
 
     private string DetermineSitePurpose(string title, string description)
@@ -275,13 +268,10 @@ public class SharePointSearchTool
         return "General";
     }
 
-    private double CalculateActivityLevel(string created, string lastModified)
+    private double CalculateActivityLevel(DateTime created, DateTime lastModified)
     {
-        if (!DateTime.TryParse(created, out var createdDate) || !DateTime.TryParse(lastModified, out var modifiedDate))
-            return 0.5;
-        
-        var daysSinceCreated = (DateTime.Now - createdDate).TotalDays;
-        var daysSinceModified = (DateTime.Now - modifiedDate).TotalDays;
+        var daysSinceCreated = (DateTime.Now - created).TotalDays;
+        var daysSinceModified = (DateTime.Now - lastModified).TotalDays;
         
         if (daysSinceModified <= 7) return 1.0; // Very active
         if (daysSinceModified <= 30) return 0.8; // Active
