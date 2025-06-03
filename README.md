@@ -10,55 +10,47 @@ This application provides a conversational AI interface that can interact with y
 
 ### System Architecture
 ```
-┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│    React Client     │     │   ASP.NET Core      │     │   MCP Server        │
-│   (Port 31337)      │     │    API Server       │     │   (Port 31339)      │
-│                     │     │   (Port 31338)      │     │                     │
-│ • MSAL Auth         │────▶│ • Semantic Kernel   │────▶│ • SharePoint Tools  │
-│ • Chat Interface    │     │ • Function Calling  │     │ • SSE Transport     │
-│ • Card Rendering    │     │ • Plugin System     │     │ • Token Auth        │
-│ • TypeScript        │     │ • Structured Data   │     │ • Tenant Discovery  │
-└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
-         │                           │                           │
-         │                           ▼                           │
-         │                  ┌─────────────────────┐              │
-         │                  │   Microsoft Graph   │              │
-         └─────────────────▶│                     │◀─────────────┘
-                            │ • Authentication    │
-                            │ • Mail              │
-                            │ • Calendar          │
-                            │ • OneDrive          │
-                            │ • To Do             │
-                            │ • SharePoint        │
-                            └─────────────────────┘
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   React Client  │────▶│  ASP.NET Core   │────▶│   MCP Server    │
+│   (Port 31337)  │     │   (Port 31338)  │     │   (Port 31339)  │
+│                 │     │                 │     │                 │
+│ • MSAL Auth     │     │ • Semantic K.   │     │ • SharePoint    │
+│ • Chat UI       │     │ • Function Call │     │ • SSE Transport │
+│ • TypeScript    │     │ • Plugins       │     │ • OAuth Token   │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+         │                       │                       │
+         └───────────────────────▼───────────────────────┘
+                       ┌─────────────────┐
+                       │ Microsoft Graph │
+                       │ • Mail/Calendar │
+                       │ • OneDrive      │
+                       │ • To Do         │
+                       │ • SharePoint    │
+                       └─────────────────┘
 ```
 
 ### Data Flow Architecture
 ```
-User Input ──▶ Intent Analysis ──▶ Function Selection ──▶ Microsoft 365 APIs ──▶ Structured Response
-     │               │                      │                        │                     │
-     │               ▼                      ▼                        ▼                     ▼
-     │    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-     │    │ AI determines:  │    │ Semantic Kernel │    │ Graph API calls │    │ Cards/Analysis  │
-     │    │ • Intent type   │    │ auto-invokes:   │    │ with user scope │    │ rendered in UI  │
-     │    │ • Data source   │    │ • ToDo plugin   │    │ • Secure tokens │    │ • Task cards    │
-     └───▶│ • Response mode │───▶│ • Mail plugin   │───▶│ • Real user data│───▶│ • Email cards   │
-          │ • Parameters    │    │ • Calendar      │    │ • Error handling│    │ • Calendar view │
-          │ • Confidence    │    │ • OneDrive      │    │ • Rate limiting │    │ • Analysis text │
-          └─────────────────┘    │ • SharePoint    │    └─────────────────┘    └─────────────────┘
-                                 └─────────────────┘
+User Input ──▶ Intent Analysis ──▶ Function Selection ──▶ Graph APIs ──▶ UI Response
+     │              │                    │                    │              │
+     ▼              ▼                    ▼                    ▼              ▼
+┌─────────┐  ┌─────────────┐      ┌─────────────┐      ┌──────────┐  ┌──────────┐
+│ Natural │  │ AI Analysis │      │ SK Plugins  │      │ MS Graph │  │ React UI │
+│Language │  │ • Intent    │      │ • ToDo      │      │ • Secure │  │ • Cards  │
+│ Query   │  │ • Context   │      │ • Mail      │      │ • OAuth  │  │ • Analysis│
+│         │  │ • Params    │      │ • Calendar  │      │ • Real   │  │ • Dynamic│
+└─────────┘  └─────────────┘      └─────────────┘      └──────────┘  └──────────┘
 ```
 
 ### MCP Integration Flow
 ```
-SharePoint Query ──▶ MCP Client ──▶ SharePoint MCP Server ──▶ SharePoint API ──▶ Structured JSON
-       │                   │                     │                       │                │
-       ▼                   ▼                     ▼                       ▼                ▼
-┌─────────────┐    ┌─────────────┐       ┌─────────────┐       ┌─────────────┐    ┌─────────────┐
-│ User asks   │    │ SSE Client  │       │ Tool        │       │ SharePoint  │    │ Site cards  │
-│ "SharePoint │    │ Transport   │       │ Discovery   │       │ Graph API   │    │ displayed   │
-│ sites"      │    │ Connection  │       │ & Execution │       │ with OAuth  │    │ in React    │
-└─────────────┘    └─────────────┘       └─────────────┘       └─────────────┘    └─────────────┘
+SharePoint Query ──▶ MCP Client ──▶ MCP Server ──▶ Graph API ──▶ JSON Response
+       │                  │              │             │             │
+       ▼                  ▼              ▼             ▼             ▼
+┌─────────────┐    ┌─────────────┐ ┌─────────────┐ ┌──────────┐ ┌──────────┐
+│ User asks   │    │ SSE Client  │ │ Tool Exec   │ │ SP Graph │ │ Site     │
+│ "SP sites"  │    │ Transport   │ │ Discovery   │ │ + OAuth  │ │ Cards    │
+└─────────────┘    └─────────────┘ └─────────────┘ └──────────┘ └──────────┘
 ```
 
 ## ✨ Key Features
@@ -484,4 +476,4 @@ This project is provided as-is for educational and proof-of-concept purposes.
 2. Run `./start-all.sh` to launch all services
 3. Visit https://localhost:31337 to start chatting with your AI assistant!
 
-The AI will automatically call the appropriate Microsoft 365 APIs based on your natural language requests and display the results as interactive cards. 
+The AI will automatically call the appropriate Microsoft 365 APIs based on your natural language requests and display the results as interactive cards.
