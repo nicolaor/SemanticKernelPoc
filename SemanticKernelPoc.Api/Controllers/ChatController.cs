@@ -90,41 +90,6 @@ public class ChatController(
 
             _logger.LogInformation("AI response generated with {Length} characters", aiResponse.Length);
             
-            // Check if the AI response contains SharePoint structured data from MCP tools
-            if (aiResponse.Contains("__sharepoint_structured_data"))
-            {
-                _logger.LogInformation("Processing SharePoint structured data from AI response");
-                
-                try
-                {
-                    var jsonDoc = JsonDocument.Parse(aiResponse);
-                    if (jsonDoc.RootElement.TryGetProperty("__sharepoint_structured_data", out var structuredFlag) && 
-                        structuredFlag.GetBoolean() &&
-                        jsonDoc.RootElement.TryGetProperty("sites", out var sitesElement))
-                    {
-                        var sites = JsonSerializer.Deserialize<object[]>(sitesElement.GetRawText());
-                        var message = jsonDoc.RootElement.TryGetProperty("message", out var messageElement) 
-                            ? messageElement.GetString() : $"Found {sites.Length} SharePoint sites.";
-                        
-                        // Set structured data in kernel for card display
-                        kernel.Data["HasStructuredData"] = "true";
-                        kernel.Data["StructuredDataType"] = "sharepoint";
-                        kernel.Data["StructuredDataCount"] = sites.Length;
-                        kernel.Data["SharePointCards"] = sites;
-                        kernel.Data["SharePointFunctionResponse"] = message;
-                        
-                        _logger.LogInformation("Set SharePoint card data with {Count} sites", sites.Length);
-                        
-                        // Override the AI response with a clean message
-                        aiResponse = message ?? $"Found {sites.Length} SharePoint sites.";
-                    }
-                }
-                catch (JsonException ex)
-                {
-                    _logger.LogWarning(ex, "Failed to parse SharePoint structured data from AI response");
-                }
-            }
-            
             // Check for structured data in kernel and build appropriate response
             ChatResponse processedResponse;
             if (kernel.Data.TryGetValue("HasStructuredData", out var hasStructured) && hasStructured?.ToString() == "true")
