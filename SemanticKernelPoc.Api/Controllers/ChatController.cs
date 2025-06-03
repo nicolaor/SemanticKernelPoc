@@ -209,7 +209,14 @@ public class ChatController(
             var accessToken = await HttpContext.GetTokenAsync("access_token");
             if (!string.IsNullOrEmpty(accessToken))
             {
-                kernel.Data["AccessToken"] = accessToken;
+                kernel.Data["UserAccessToken"] = accessToken;
+                
+                // Get user name from claims
+                var userName = HttpContext.User?.Identity?.Name ?? 
+                              HttpContext.User?.FindFirst("name")?.Value ?? 
+                              HttpContext.User?.FindFirst("preferred_username")?.Value ?? 
+                              "User";
+                kernel.Data["UserName"] = userName;
 
                 // Add Microsoft Graph plugins
                 var graphClientFactory = HttpContext.RequestServices.GetRequiredService<IGraphClientFactory>();
@@ -237,6 +244,10 @@ public class ChatController(
 
                 // Add MCP tools for SharePoint
                 await AddMcpToolsToKernelAsync(kernel, accessToken);
+            }
+            else
+            {
+                _logger.LogWarning("No access token found for user: {UserId}", userId);
             }
         }
         catch (Exception ex)
