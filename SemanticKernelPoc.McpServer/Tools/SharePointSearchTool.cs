@@ -23,10 +23,8 @@ public class SharePointSearchTool
     [Description("Simple test with no dependencies to verify MCP execution")]
     public string SimpleTest([Description("User access token for testing")] string accessToken = "")
     {
-        _logger.LogInformation("🟢🟢🟢 SIMPLE TEST METHOD CALLED WITH NO DEPENDENCIES! 🟢🟢🟢");
-        _logger.LogInformation("🟢 SimpleTest called with accessToken length: {TokenLength}", accessToken?.Length ?? 0);
-        _logger.LogInformation("🟢 SimpleTest method executed with accessToken length: {TokenLength}", accessToken?.Length ?? 0);
-        return $"🟢 Simple test method executed successfully - accessToken length: {accessToken?.Length ?? 0}";
+        _logger.LogInformation("Simple test method called with accessToken length: {TokenLength}", accessToken?.Length ?? 0);
+        return $"Simple test method executed successfully - accessToken length: {accessToken?.Length ?? 0}";
     }
 
     [McpServerTool]
@@ -41,15 +39,8 @@ public class SharePointSearchTool
     {
         try
         {
-            _logger.LogInformation("🔥🔥🔥 SHAREPOINT SEARCH METHOD CALLED! 🔥🔥🔥");
-            _logger.LogInformation("🔥 SearchSharePointSites called with accessToken length: {TokenLength}", accessToken?.Length ?? 0);
-            _logger.LogInformation("🔥 SearchSharePointSites called with searchQuery: '{SearchQuery}'", searchQuery);
-            _logger.LogInformation("🔥 SearchSharePointSites called with count: {Count}", count);
-            _logger.LogInformation("🔥 SearchSharePointSites called with responseMode: '{ResponseMode}'", responseMode);
+            _logger.LogInformation("SharePoint search called with query: '{SearchQuery}', count: {Count}, mode: {ResponseMode}", searchQuery, count, responseMode);
 
-            _logger.LogInformation("🔍 Starting SharePoint sites search with query: '{SearchQuery}', count: {Count}, mode: {ResponseMode}", searchQuery, count, responseMode);
-
-            // Create SharePointSearchRequest object
             var searchRequest = new SharePointSearchRequest
             {
                 Query = searchQuery ?? "",
@@ -58,25 +49,9 @@ public class SharePointSearchTool
                 SortOrder = "desc"
             };
 
-            // Use the actual SharePoint search service
             var searchResponse = await _sharePointService.SearchSharePointSitesAsync(searchRequest, accessToken);
 
-            _logger.LogInformation("✅ SharePoint search completed. Found {ResultCount} sites", searchResponse.Sites?.Count ?? 0);
-
-            // *** LOG COMPLETE SHAREPOINT SEARCH RESPONSE OBJECT ***
-            try
-            {
-                var searchResponseJson = JsonSerializer.Serialize(searchResponse, new JsonSerializerOptions 
-                { 
-                    WriteIndented = true,
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
-                _logger.LogInformation("📋 === COMPLETE SHAREPOINT SEARCH RESPONSE === {SearchResponseJson}", searchResponseJson);
-            }
-            catch (Exception jsonEx)
-            {
-                _logger.LogWarning("⚠️ Failed to serialize SharePoint search response for logging: {Error}", jsonEx.Message);
-            }
+            _logger.LogInformation("SharePoint search completed, found {ResultCount} sites", searchResponse.Sites?.Count ?? 0);
 
             if (searchResponse.Sites == null || !searchResponse.Sites.Any())
             {
@@ -91,10 +66,7 @@ public class SharePointSearchTool
                     dataType = "sharepoint_sites"
                 };
 
-                // Log empty response
-                var emptyResponseJson = JsonSerializer.Serialize(emptyResponse, new JsonSerializerOptions { WriteIndented = true });
-                _logger.LogInformation("📤 === EMPTY MCP RESPONSE === {EmptyResponseJson}", emptyResponseJson);
-                
+                _logger.LogInformation("Returning empty SharePoint search response");
                 return emptyResponse;
             }
 
@@ -103,30 +75,15 @@ public class SharePointSearchTool
             {
                 "analysis" => FormatForAnalysisMode(searchResponse.Sites, searchQuery, searchResponse.QueryExplanation),
                 "raw" => FormatForRawMode(searchResponse.Sites, searchQuery, searchResponse.QueryExplanation),
-                _ => FormatForCardMode(searchResponse.Sites, searchQuery, searchResponse.QueryExplanation) // default to card mode
+                _ => FormatForCardMode(searchResponse.Sites, searchQuery, searchResponse.QueryExplanation)
             };
 
-            // *** LOG COMPLETE FINAL MCP RESPONSE ***
-            try
-            {
-                var finalResponseJson = JsonSerializer.Serialize(finalResponse, new JsonSerializerOptions 
-                { 
-                    WriteIndented = true,
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
-                _logger.LogInformation("📤 === FINAL MCP RESPONSE TO CLIENT (Mode: {ResponseMode}) === {FinalResponseJson}", responseMode, finalResponseJson);
-            }
-            catch (Exception jsonEx)
-            {
-                _logger.LogWarning("⚠️ Failed to serialize final MCP response for logging: {Error}", jsonEx.Message);
-            }
-
-            _logger.LogInformation("🚀 RETURNING SUCCESS RESPONSE WITH {SiteCount} SITES IN {ResponseMode} MODE", searchResponse.Sites.Count, responseMode);
+            _logger.LogInformation("Returning SharePoint search response with {SiteCount} sites in {ResponseMode} mode", searchResponse.Sites.Count, responseMode);
             return finalResponse;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error in SharePoint sites search");
+            _logger.LogError(ex, "Error in SharePoint sites search");
             
             var errorResponse = new
             {
@@ -138,17 +95,6 @@ public class SharePointSearchTool
                 responseMode = responseMode,
                 dataType = "sharepoint_sites"
             };
-
-            // Log error response
-            try
-            {
-                var errorResponseJson = JsonSerializer.Serialize(errorResponse, new JsonSerializerOptions { WriteIndented = true });
-                _logger.LogError("📤 === ERROR MCP RESPONSE === {ErrorResponseJson}", errorResponseJson);
-            }
-            catch (Exception jsonEx)
-            {
-                _logger.LogWarning("⚠️ Failed to serialize error response for logging: {Error}", jsonEx.Message);
-            }
 
             return errorResponse;
         }
@@ -166,43 +112,20 @@ public class SharePointSearchTool
     {
         try
         {
-            _logger.LogInformation("🔥🔥🔥 RECENT SHAREPOINT SEARCH METHOD CALLED! 🔥🔥🔥");
-            _logger.LogInformation("🔥 SearchRecentSharePointSites called with accessToken length: {TokenLength}", accessToken?.Length ?? 0);
-            _logger.LogInformation("🔥 SearchRecentSharePointSites called with searchQuery: '{SearchQuery}'", searchQuery);
-            _logger.LogInformation("🔥 SearchRecentSharePointSites called with count: {Count}", count);
-            _logger.LogInformation("🔥 SearchRecentSharePointSites called with responseMode: '{ResponseMode}'", responseMode);
+            _logger.LogInformation("Recent SharePoint search called with query: '{SearchQuery}', count: {Count}, mode: {ResponseMode}", searchQuery, count, responseMode);
 
-            _logger.LogInformation("🔍 Starting recent SharePoint sites search with count: {Count}, mode: {ResponseMode}", count, responseMode);
-
-            // Create SharePointSearchRequest object for recent sites (sorted by modified date descending)
             var searchRequest = new SharePointSearchRequest
             {
                 Query = searchQuery ?? "",
                 MaxResults = Math.Min(count, maxResults),
                 SortBy = "modified",
                 SortOrder = "desc",
-                TimePeriod = "last_month" // Focus on recent sites from last month
+                TimePeriod = "last_month"
             };
 
-            // Use the actual SharePoint search service for recent sites
             var searchResponse = await _sharePointService.SearchSharePointSitesAsync(searchRequest, accessToken);
 
-            _logger.LogInformation("✅ Recent SharePoint sites search completed. Found {ResultCount} sites", searchResponse.Sites?.Count ?? 0);
-
-            // *** LOG COMPLETE SHAREPOINT SEARCH RESPONSE OBJECT FOR RECENT SITES ***
-            try
-            {
-                var searchResponseJson = JsonSerializer.Serialize(searchResponse, new JsonSerializerOptions 
-                { 
-                    WriteIndented = true,
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
-                _logger.LogInformation("📋 === COMPLETE RECENT SITES SHAREPOINT RESPONSE === {SearchResponseJson}", searchResponseJson);
-            }
-            catch (Exception jsonEx)
-            {
-                _logger.LogWarning("⚠️ Failed to serialize recent sites SharePoint search response for logging: {Error}", jsonEx.Message);
-            }
+            _logger.LogInformation("Recent SharePoint search completed, found {ResultCount} sites", searchResponse.Sites?.Count ?? 0);
 
             if (searchResponse.Sites == null || !searchResponse.Sites.Any())
             {
@@ -212,173 +135,118 @@ public class SharePointSearchTool
                     message = "No recent SharePoint sites found.",
                     sites = new List<object>(),
                     totalCount = 0,
-                    requestedCount = count,
+                    searchQuery = searchQuery,
                     responseMode = responseMode,
                     dataType = "sharepoint_sites"
                 };
 
-                // Log empty response
-                var emptyResponseJson = JsonSerializer.Serialize(emptyResponse, new JsonSerializerOptions { WriteIndented = true });
-                _logger.LogInformation("📤 === EMPTY RECENT SITES MCP RESPONSE === {EmptyResponseJson}", emptyResponseJson);
-                
+                _logger.LogInformation("Returning empty recent SharePoint search response");
                 return emptyResponse;
             }
 
             // Format the results based on response mode
             object finalResponse = responseMode.ToLower() switch
             {
-                "analysis" => FormatForAnalysisMode(searchResponse.Sites, $"recent sites {(!string.IsNullOrEmpty(searchQuery) ? $"matching '{searchQuery}'" : "")}", searchResponse.QueryExplanation),
+                "analysis" => FormatForAnalysisMode(searchResponse.Sites, searchQuery, searchResponse.QueryExplanation),
                 "raw" => FormatForRawMode(searchResponse.Sites, searchQuery, searchResponse.QueryExplanation),
-                _ => FormatForCardMode(searchResponse.Sites, $"recent sites {(!string.IsNullOrEmpty(searchQuery) ? $"matching '{searchQuery}'" : "")}", searchResponse.QueryExplanation) // default to card mode
+                _ => FormatForCardMode(searchResponse.Sites, searchQuery, searchResponse.QueryExplanation)
             };
 
-            // *** LOG COMPLETE FINAL MCP RESPONSE FOR RECENT SITES ***
-            try
-            {
-                var finalResponseJson = JsonSerializer.Serialize(finalResponse, new JsonSerializerOptions 
-                { 
-                    WriteIndented = true,
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
-                _logger.LogInformation("📤 === FINAL RECENT SITES MCP RESPONSE TO CLIENT (Mode: {ResponseMode}) === {FinalResponseJson}", responseMode, finalResponseJson);
-            }
-            catch (Exception jsonEx)
-            {
-                _logger.LogWarning("⚠️ Failed to serialize final recent sites MCP response for logging: {Error}", jsonEx.Message);
-            }
-
-            _logger.LogInformation("🚀 RETURNING RECENT SITES SUCCESS RESPONSE WITH {SiteCount} SITES IN {ResponseMode} MODE", searchResponse.Sites.Count, responseMode);
+            _logger.LogInformation("Returning recent SharePoint search response with {SiteCount} sites in {ResponseMode} mode", searchResponse.Sites.Count, responseMode);
             return finalResponse;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error in recent SharePoint sites search");
+            _logger.LogError(ex, "Error in recent SharePoint sites search");
             
             var errorResponse = new
             {
                 success = false,
-                message = $"Error getting recent SharePoint sites: {ex.Message}",
+                message = $"Error searching recent SharePoint sites: {ex.Message}",
                 sites = new List<object>(),
                 totalCount = 0,
-                requestedCount = count,
+                searchQuery = searchQuery,
                 responseMode = responseMode,
                 dataType = "sharepoint_sites"
             };
-
-            // Log error response
-            try
-            {
-                var errorResponseJson = JsonSerializer.Serialize(errorResponse, new JsonSerializerOptions { WriteIndented = true });
-                _logger.LogError("📤 === ERROR RECENT SITES MCP RESPONSE === {ErrorResponseJson}", errorResponseJson);
-            }
-            catch (Exception jsonEx)
-            {
-                _logger.LogWarning("⚠️ Failed to serialize error response for logging: {Error}", jsonEx.Message);
-            }
 
             return errorResponse;
         }
     }
 
-    // *** NEW HELPER METHODS FOR DIFFERENT RESPONSE FORMATS ***
-
     private object FormatForCardMode(List<SharePointSite> sites, string searchQuery, string queryExplanation)
     {
-        _logger.LogInformation("🃏 Formatting response for CARD mode");
-        
-        var formattedSites = sites.Select((site, index) =>
+        var formattedSites = sites.Select((site, index) => new
         {
-            return new
-            {
-                id = $"site_card_{index}",
-                title = site.Title ?? "Unnamed Site",
-                description = site.Description ?? "",
-                url = site.Url ?? "",
-                created = GetFormattedDate(site.Created.ToString(), "yyyy-MM-dd"),
-                createdFormatted = GetFormattedDate(site.Created.ToString(), "MMM dd, yyyy"),
-                lastModified = GetFormattedDate(site.LastModified.ToString(), "yyyy-MM-dd"),
-                lastModifiedFormatted = GetFormattedDate(site.LastModified.ToString(), "MMM dd, yyyy"),
-                webTemplate = site.WebTemplate ?? "Unknown",
-                type = "sharepoint_site",
-                status = "active"
-            };
+            id = $"site_card_{index}",
+            title = site.Title ?? "Untitled Site",
+            description = site.Description ?? "",
+            url = site.Url ?? "",
+            created = GetFormattedDate(site.Created, "yyyy-MM-dd"),
+            webTemplate = site.WebTemplate ?? "Unknown",
+            type = "sharepoint_site",
+            status = "active"
         }).ToList();
 
         return new
         {
             success = true,
-            message = $"Found {formattedSites.Count} SharePoint sites.",
+            message = $"Found {sites.Count} SharePoint sites" + (!string.IsNullOrEmpty(searchQuery) ? $" matching '{searchQuery}'" : ""),
             sites = formattedSites,
-            totalCount = formattedSites.Count,
+            totalCount = sites.Count,
             searchQuery = searchQuery,
-            queryExplanation = queryExplanation,
             responseMode = "card",
             dataType = "sharepoint_sites",
-            // Add metadata for card rendering
-            displayFormat = "cards",
-            cardType = "sharepoint_site"
+            queryExplanation = queryExplanation
         };
     }
 
     private object FormatForAnalysisMode(List<SharePointSite> sites, string searchQuery, string queryExplanation)
     {
-        _logger.LogInformation("🔍 Formatting response for ANALYSIS mode");
-        
-        var analysisData = sites.Select((site, index) =>
+        var analysisData = sites.Select(site => new
         {
-            return new
-            {
-                title = site.Title ?? "Unnamed Site",
-                description = site.Description ?? "",
-                url = site.Url ?? "",
-                created = GetFormattedDate(site.Created.ToString(), "yyyy-MM-dd HH:mm"),
-                lastModified = GetFormattedDate(site.LastModified.ToString(), "yyyy-MM-dd HH:mm"),
-                webTemplate = site.WebTemplate ?? "Unknown",
-                purpose = DetermineSitePurpose(site.Title, site.Description),
-                activity = CalculateActivityLevel(site.Created.ToString(), site.LastModified.ToString()),
-                category = CategorizeSite(site.WebTemplate)
-            };
+            title = site.Title ?? "Untitled Site",
+            url = site.Url ?? "",
+            created = GetFormattedDate(site.Created, "yyyy-MM-dd"),
+            webTemplate = site.WebTemplate ?? "Unknown",
+            purpose = DetermineSitePurpose(site.Title, site.Description),
+            activityLevel = CalculateActivityLevel(site.Created, site.LastModified),
+            category = CategorizeSite(site.WebTemplate)
         }).ToList();
 
         return new
         {
             success = true,
-            message = $"Analysis data for {analysisData.Count} SharePoint sites.",
+            message = $"Analysis of {sites.Count} SharePoint sites" + (!string.IsNullOrEmpty(searchQuery) ? $" matching '{searchQuery}'" : ""),
             sites = analysisData,
-            totalCount = analysisData.Count,
+            totalCount = sites.Count,
             searchQuery = searchQuery,
-            queryExplanation = queryExplanation,
             responseMode = "analysis",
             dataType = "sharepoint_sites",
-            // Add analysis metadata
-            analysisContext = new
+            queryExplanation = queryExplanation,
+            summary = new
             {
-                totalSites = analysisData.Count,
-                averageActivity = analysisData.Any() ? analysisData.Average(s => s.activity) : 0,
-                templates = analysisData.GroupBy(s => s.webTemplate).Select(g => new { template = g.Key, count = g.Count() }),
-                categories = analysisData.GroupBy(s => s.category).Select(g => new { category = g.Key, count = g.Count() })
+                totalSites = sites.Count,
+                siteTypes = sites.GroupBy(s => s.WebTemplate ?? "Unknown").ToDictionary(g => g.Key, g => g.Count()),
+                averageActivityLevel = analysisData.Average(s => s.activityLevel)
             }
         };
     }
 
     private object FormatForRawMode(List<SharePointSite> sites, string searchQuery, string queryExplanation)
     {
-        _logger.LogInformation("🗃️ Formatting response for RAW mode");
-        
         return new
         {
             success = true,
-            message = $"Raw data for {sites.Count} SharePoint sites.",
-            sites = sites, // Return unformatted site data
+            message = $"Raw data for {sites.Count} SharePoint sites" + (!string.IsNullOrEmpty(searchQuery) ? $" matching '{searchQuery}'" : ""),
+            sites = sites,
             totalCount = sites.Count,
             searchQuery = searchQuery,
-            queryExplanation = queryExplanation,
             responseMode = "raw",
-            dataType = "sharepoint_sites"
+            dataType = "sharepoint_sites",
+            queryExplanation = queryExplanation
         };
     }
-
-    // *** HELPER METHODS FOR DATA EXTRACTION AND ANALYSIS ***
 
     private string GetFormattedDate(string dateValue, string format)
     {
@@ -396,47 +264,43 @@ public class SharePointSearchTool
     {
         var content = $"{title} {description}".ToLower();
         
-        if (content.Contains("team") || content.Contains("collaboration")) return "Team Collaboration";
         if (content.Contains("project")) return "Project Management";
-        if (content.Contains("document") || content.Contains("file")) return "Document Repository";
-        if (content.Contains("communication") || content.Contains("news")) return "Communication Hub";
+        if (content.Contains("team")) return "Team Collaboration";
+        if (content.Contains("document")) return "Document Storage";
         if (content.Contains("hr") || content.Contains("human")) return "Human Resources";
-        if (content.Contains("finance") || content.Contains("budget")) return "Finance";
         if (content.Contains("marketing")) return "Marketing";
         if (content.Contains("sales")) return "Sales";
+        if (content.Contains("finance")) return "Finance";
         
-        return "General Purpose";
+        return "General";
     }
 
     private double CalculateActivityLevel(string created, string lastModified)
     {
-        if (!DateTime.TryParse(created, out var createdDate) || 
-            !DateTime.TryParse(lastModified, out var modifiedDate))
-        {
-            return 0.5; // Default medium activity
-        }
+        if (!DateTime.TryParse(created, out var createdDate) || !DateTime.TryParse(lastModified, out var modifiedDate))
+            return 0.5;
         
-        var totalDays = (DateTime.Now - createdDate).TotalDays;
+        var daysSinceCreated = (DateTime.Now - createdDate).TotalDays;
         var daysSinceModified = (DateTime.Now - modifiedDate).TotalDays;
         
-        if (totalDays == 0) return 1.0;
+        if (daysSinceModified <= 7) return 1.0; // Very active
+        if (daysSinceModified <= 30) return 0.8; // Active
+        if (daysSinceModified <= 90) return 0.6; // Moderate
+        if (daysSinceModified <= 365) return 0.4; // Low
         
-        // Activity score: 1.0 = very active, 0.0 = inactive
-        var activityScore = Math.Max(0.0, 1.0 - (daysSinceModified / Math.Max(totalDays, 30)));
-        return Math.Round(activityScore, 2);
+        return 0.2; // Very low
     }
 
     private string CategorizeSite(string webTemplate)
     {
-        return webTemplate?.ToLower() switch
+        return webTemplate?.ToUpper() switch
         {
-            var t when t.Contains("team") => "Team Site",
-            var t when t.Contains("communication") => "Communication Site",
-            var t when t.Contains("hub") => "Hub Site",
-            var t when t.Contains("group") => "Group Site",
-            var t when t.Contains("project") => "Project Site",
-            var t when t.Contains("blog") => "Blog",
-            var t when t.Contains("wiki") => "Wiki",
+            "STS" => "Team Site",
+            "BLOG" => "Blog",
+            "WIKI" => "Wiki",
+            "BDR" => "Document Center",
+            "OFFILE" => "Records Center",
+            "TEAMCHANNEL" => "Teams Channel",
             _ => "Standard Site"
         };
     }
