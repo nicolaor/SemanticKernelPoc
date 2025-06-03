@@ -34,12 +34,12 @@ This application provides a conversational AI interface that can interact with y
 User Input ──▶ Intent Analysis ──▶ Function Selection ──▶ Graph APIs ──▶ UI Response
      │              │                    │                    │              │
      ▼              ▼                    ▼                    ▼              ▼
-┌─────────┐  ┌─────────────┐      ┌─────────────┐      ┌──────────┐  ┌──────────┐
-│ Natural │  │ AI Analysis │      │ SK Plugins  │      │ MS Graph │  │ React UI │
-│Language │  │ • Intent    │      │ • ToDo      │      │ • Secure │  │ • Cards  │
-│ Query   │  │ • Context   │      │ • Mail      │      │ • OAuth  │  │ • Analysis│
-│         │  │ • Params    │      │ • Calendar  │      │ • Real   │  │ • Dynamic│
-└─────────┘  └─────────────┘      └─────────────┘      └──────────┘  └──────────┘
+┌───────────┐  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  ┌─────────────┐
+│ Natural   │  │ AI Analysis │    │ SK Plugins  │    │ MS Graph    │  │ React UI    │
+│ Language  │  │ • Intent    │    │ • ToDo      │    │ • Secure    │  │ • Cards     │
+│ Query     │  │ • Context   │    │ • Mail      │    │ • OAuth     │  │ • Analysis  │
+│           │  │ • Params    │    │ • Calendar  │    │ • Real-time │  │ • Dynamic   │
+└───────────┘  └─────────────┘    └─────────────┘    └─────────────┘  └─────────────┘
 ```
 
 ### MCP Integration Flow
