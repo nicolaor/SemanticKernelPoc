@@ -44,75 +44,198 @@ public class SharePointSearchService : ISharePointSearchService
 
     public async Task<SharePointSearchResponse> SearchSharePointSitesAsync(SharePointSearchRequest request, string userToken)
     {
+        var requestId = Guid.NewGuid().ToString("N")[..8];
+        
         try
         {
-            _logger.LogInformation("🔍 Starting SharePoint sites search for query: {Query}", request.Query);
-            _logger.LogInformation("📋 Search parameters - Query: '{Query}', MaxResults: {MaxResults}, CreatedAfter: {CreatedAfter}, CreatedBefore: {CreatedBefore}", 
-                request.Query, request.MaxResults, request.CreatedAfter, request.CreatedBefore);
-            _logger.LogInformation("📋 Received user token length: {TokenLength} characters", userToken?.Length ?? 0);
+            _logger.LogInformation("🔍 === SHAREPOINT SEARCH SERVICE START === RequestId: {RequestId}", requestId);
+            _logger.LogInformation("📋 SERVICE INPUT for request {RequestId}:", requestId);
+            _logger.LogInformation("   Query: '{Query}'", request.Query ?? "(null)");
+            _logger.LogInformation("   MaxResults: {MaxResults}", request.MaxResults);
+            _logger.LogInformation("   CreatedAfter: '{CreatedAfter}'", request.CreatedAfter ?? "(null)");
+            _logger.LogInformation("   CreatedBefore: '{CreatedBefore}'", request.CreatedBefore ?? "(null)");
+            _logger.LogInformation("   SortBy: '{SortBy}'", request.SortBy ?? "(null)");
+            _logger.LogInformation("   SortOrder: '{SortOrder}'", request.SortOrder ?? "(null)");
+            _logger.LogInformation("   TimePeriod: '{TimePeriod}'", request.TimePeriod ?? "(null)");
+            _logger.LogInformation("   Received user token length: {TokenLength} characters", userToken?.Length ?? 0);
             
             // Validate the incoming token
             if (string.IsNullOrWhiteSpace(userToken))
             {
-                _logger.LogError("❌ User token validation failed - Token is null or empty");
+                _logger.LogError("❌ Request {RequestId} VALIDATION FAILED: User token is null or empty", requestId);
                 throw new ArgumentException("User token is null or empty", nameof(userToken));
             }
 
             // Log token details (first/last chars only for security)
             var tokenStart = userToken.Length > 10 ? userToken.Substring(0, 10) : userToken;
             var tokenEnd = userToken.Length > 10 ? userToken.Substring(userToken.Length - 10) : "";
-            _logger.LogInformation("🔑 Token validation - starts with: {TokenStart}..., ends with: ...{TokenEnd}", tokenStart, tokenEnd);
+            _logger.LogInformation("🔑 Request {RequestId} token validation - starts with: {TokenStart}..., ends with: ...{TokenEnd}", 
+                requestId, tokenStart, tokenEnd);
+            
+            // Validate token structure
+            if (userToken.Contains("."))
+            {
+                var tokenParts = userToken.Split('.');
+                _logger.LogInformation("🔍 Request {RequestId} token structure - Parts: {PartsCount} (expected: 3 for JWT)", 
+                    requestId, tokenParts.Length);
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ Request {RequestId} token does not appear to be JWT format (no dots found)", requestId);
+            }
             
             // Get tenant information using Graph API instead of token parsing
-            _logger.LogInformation("🏢 Step 1: Getting tenant information from Graph API...");
+            _logger.LogInformation("🏢 Request {RequestId} STEP 1: Getting tenant information from Graph API...", requestId);
+            TenantInfo tenantInfo;
             try
             {
-                var tenantInfo = await GetTenantInfoFromGraphAsync(userToken);
-                _logger.LogInformation("✅ Step 1 completed: Tenant ID: {TenantId}, SharePoint URL: {SharePointUrl}", 
-                    tenantInfo.TenantId, tenantInfo.SharePointRootUrl);
-
-                _logger.LogInformation("🔐 Step 2: Acquiring SharePoint access token...");
-                try
-                {
-                    var sharePointAccessToken = await GetSharePointTokenAsync(userToken, tenantInfo);
-                    _logger.LogInformation("✅ Step 2 completed: SharePoint token acquired (length: {TokenLength})", sharePointAccessToken?.Length ?? 0);
-
-                    _logger.LogInformation("🔍 Step 3: Executing SharePoint search...");
-                    try
-                    {
-                        var searchResults = await ExecuteSearchAsync(sharePointAccessToken, request, tenantInfo);
-                        _logger.LogInformation("✅ Step 3 completed: Search executed successfully");
-
-                        var response = ParseSearchResults(searchResults);
-                        
-                        // Add query information to response
-                        response.SearchQuery = BuildSearchQuery(request);
-                        response.QueryExplanation = GenerateQueryExplanation(request);
-                        
-                        _logger.LogInformation("✅ SharePoint sites search completed successfully. Found {Count} sites.", (int)(response.Sites?.Count ?? 0));
-                        return response;
-                    }
-                    catch (Exception searchEx)
-                    {
-                        _logger.LogError(searchEx, "❌ Step 3 failed: SharePoint search execution failed");
-                        throw;
-                    }
-                }
-                catch (Exception tokenEx)
-                {
-                    _logger.LogError(tokenEx, "❌ Step 2 failed: SharePoint token acquisition failed");
-                    throw;
-                }
+                var tenantStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                tenantInfo = await GetTenantInfoFromGraphAsync(userToken);
+                tenantStopwatch.Stop();
+                
+                _logger.LogInformation("✅ Request {RequestId} STEP 1 completed in {ElapsedMs}ms:", requestId, tenantStopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("   Tenant ID: {TenantId}", tenantInfo.TenantId);
+                _logger.LogInformation("   SharePoint URL: {SharePointUrl}", tenantInfo.SharePointRootUrl);
             }
             catch (Exception tenantEx)
             {
-                _logger.LogError(tenantEx, "❌ Step 1 failed: Tenant information retrieval failed");
+                _logger.LogError(tenantEx, "❌ Request {RequestId} STEP 1 FAILED: Tenant information retrieval failed", requestId);
+                _logger.LogError("   Exception Type: {ExceptionType}", tenantEx.GetType().Name);
+                _logger.LogError("   Exception Message: {Message}", tenantEx.Message);
                 throw;
             }
+
+            _logger.LogInformation("🔐 Request {RequestId} STEP 2: Acquiring SharePoint access token...", requestId);
+            string sharePointAccessToken;
+            try
+            {
+                var tokenStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                sharePointAccessToken = await GetSharePointTokenAsync(userToken, tenantInfo);
+                tokenStopwatch.Stop();
+                
+                _logger.LogInformation("✅ Request {RequestId} STEP 2 completed in {ElapsedMs}ms: SharePoint token acquired (length: {TokenLength})", 
+                    requestId, tokenStopwatch.ElapsedMilliseconds, sharePointAccessToken?.Length ?? 0);
+                
+                if (sharePointAccessToken != null && sharePointAccessToken.Length > 20)
+                {
+                    var spTokenPreview = $"{sharePointAccessToken[..10]}...{sharePointAccessToken[^10..]}";
+                    _logger.LogInformation("🔑 Request {RequestId} SharePoint token preview: {TokenPreview}", requestId, spTokenPreview);
+                }
+            }
+            catch (Exception tokenEx)
+            {
+                _logger.LogError(tokenEx, "❌ Request {RequestId} STEP 2 FAILED: SharePoint token acquisition failed", requestId);
+                _logger.LogError("   Exception Type: {ExceptionType}", tokenEx.GetType().Name);
+                _logger.LogError("   Exception Message: {Message}", tokenEx.Message);
+                throw;
+            }
+
+            _logger.LogInformation("🔍 Request {RequestId} STEP 3: Executing SharePoint search...", requestId);
+            object searchResults;
+            try
+            {
+                var searchStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                searchResults = await ExecuteSearchAsync(sharePointAccessToken, request, tenantInfo);
+                searchStopwatch.Stop();
+                
+                _logger.LogInformation("✅ Request {RequestId} STEP 3 completed in {ElapsedMs}ms: Search executed successfully", 
+                    requestId, searchStopwatch.ElapsedMilliseconds);
+                
+                // Log search results details
+                if (searchResults != null)
+                {
+                    _logger.LogInformation("📊 Request {RequestId} raw search results received:", requestId);
+                    _logger.LogInformation("   Result type: {ResultType}", searchResults.GetType().Name);
+                    
+                    try
+                    {
+                        var resultsJson = JsonSerializer.Serialize(searchResults);
+                        _logger.LogInformation("   Result size: {Size} characters", resultsJson.Length);
+                        
+                        if (resultsJson.Length <= 1000)
+                        {
+                            _logger.LogInformation("   Full results: {Results}", resultsJson);
+                        }
+                        else
+                        {
+                            _logger.LogInformation("   Results preview (first 1000 chars): {ResultsPreview}...", resultsJson[..1000]);
+                        }
+                    }
+                    catch (Exception serEx)
+                    {
+                        _logger.LogWarning("⚠️ Request {RequestId} failed to serialize search results for logging: {Error}", 
+                            requestId, serEx.Message);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ Request {RequestId} search returned null results", requestId);
+                }
+            }
+            catch (Exception searchEx)
+            {
+                _logger.LogError(searchEx, "❌ Request {RequestId} STEP 3 FAILED: SharePoint search execution failed", requestId);
+                _logger.LogError("   Exception Type: {ExceptionType}", searchEx.GetType().Name);
+                _logger.LogError("   Exception Message: {Message}", searchEx.Message);
+                _logger.LogError("   Stack Trace: {StackTrace}", searchEx.StackTrace);
+                throw;
+            }
+
+            _logger.LogInformation("🔄 Request {RequestId} STEP 4: Parsing search results...", requestId);
+            SharePointSearchResponse response;
+            try
+            {
+                var parseStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                response = ParseSearchResults(searchResults);
+                parseStopwatch.Stop();
+                
+                _logger.LogInformation("✅ Request {RequestId} STEP 4 completed in {ElapsedMs}ms: Results parsed successfully", 
+                    requestId, parseStopwatch.ElapsedMilliseconds);
+                
+                // Add query information to response
+                response.SearchQuery = BuildSearchQuery(request);
+                response.QueryExplanation = GenerateQueryExplanation(request);
+                
+                _logger.LogInformation("📊 Request {RequestId} FINAL RESPONSE:", requestId);
+                _logger.LogInformation("   Sites found: {SitesCount}", response.Sites?.Count ?? 0);
+                _logger.LogInformation("   Search query: '{SearchQuery}'", response.SearchQuery ?? "(null)");
+                _logger.LogInformation("   Query explanation: '{QueryExplanation}'", response.QueryExplanation ?? "(null)");
+                
+                if (response.Sites != null && response.Sites.Any())
+                {
+                    _logger.LogInformation("📝 Request {RequestId} site details:", requestId);
+                    for (int i = 0; i < Math.Min(response.Sites.Count, 3); i++)
+                    {
+                        var site = response.Sites[i];
+                        _logger.LogInformation("   Site {Index}: '{Title}' - {Url}", i + 1, site.Title ?? "(no title)", site.Url ?? "(no url)");
+                    }
+                    
+                    if (response.Sites.Count > 3)
+                    {
+                        _logger.LogInformation("   ... and {MoreCount} more sites", response.Sites.Count - 3);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("📝 Request {RequestId} NO SITES FOUND in response", requestId);
+                }
+            }
+            catch (Exception parseEx)
+            {
+                _logger.LogError(parseEx, "❌ Request {RequestId} STEP 4 FAILED: Results parsing failed", requestId);
+                _logger.LogError("   Exception Type: {ExceptionType}", parseEx.GetType().Name);
+                _logger.LogError("   Exception Message: {Message}", parseEx.Message);
+                throw;
+            }
+                
+            _logger.LogInformation("✅ === SHAREPOINT SEARCH SERVICE COMPLETED === RequestId: {RequestId} - Found {Count} sites", 
+                requestId, response.Sites?.Count ?? 0);
+            return response;
         }
         catch (Microsoft.Identity.Client.MsalUiRequiredException ex)
         {
-            _logger.LogWarning("❌ SharePoint search requires additional user consent - Error: {ErrorCode}", ex.ErrorCode);
+            _logger.LogWarning("❌ Request {RequestId} SharePoint search requires additional user consent - Error: {ErrorCode}", 
+                requestId, ex.ErrorCode);
             
             // Return a user-friendly error response
             var errorResponse = new SharePointSearchResponse();
@@ -127,13 +250,14 @@ public class SharePointSearchService : ISharePointSearchService
         }
         catch (UnauthorizedAccessException ex)
         {
-            _logger.LogError(ex, "❌ SharePoint search authorization failed");
+            _logger.LogError(ex, "❌ Request {RequestId} SharePoint search authorization failed", requestId);
             throw; // Re-throw as-is since it's already properly formatted
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error searching SharePoint sites - Exception Type: {ExceptionType}", ex.GetType().Name);
-            _logger.LogError("🔍 Full exception stack trace: {StackTrace}", ex.ToString());
+            _logger.LogError(ex, "❌ CRITICAL ERROR in SharePoint search service for request {RequestId}", requestId);
+            _logger.LogError("   Exception Type: {ExceptionType}", ex.GetType().Name);
+            _logger.LogError("   Full exception: {FullException}", ex.ToString());
             throw new InvalidOperationException($"Error searching SharePoint sites: {ex.Message}", ex);
         }
     }
@@ -737,58 +861,183 @@ public class SharePointSearchService : ISharePointSearchService
         var searchQuery = BuildSearchQuery(request);
         var searchUrl = BuildSearchUrl(searchQuery, request, tenantInfo);
         
-        _logger.LogInformation("🔍 Executing SharePoint search: {Query} (Max: {MaxResults})", searchQuery, request.MaxResults);
-        _logger.LogInformation("🌐 SharePoint Search URL: {SearchUrl}", searchUrl);
+        _logger.LogInformation("🔍 === EXECUTING SHAREPOINT SEARCH ===");
+        _logger.LogInformation("📋 Search Parameters:");
+        _logger.LogInformation("   Built Query: '{Query}'", searchQuery);
+        _logger.LogInformation("   Max Results: {MaxResults}", request.MaxResults);
+        _logger.LogInformation("   SharePoint Root URL: {SharePointUrl}", tenantInfo.SharePointRootUrl);
+        _logger.LogInformation("   Full Search URL: {SearchUrl}", searchUrl);
+        _logger.LogInformation("   Access Token Length: {TokenLength} chars", accessToken?.Length ?? 0);
+        
+        if (accessToken != null && accessToken.Length > 20)
+        {
+            var tokenPreview = $"{accessToken[..10]}...{accessToken[^10..]}";
+            _logger.LogInformation("   Access Token Preview: {TokenPreview}", tokenPreview);
+        }
         
         using var httpRequestMessage = new HttpRequestMessage(HttpMethod.Get, searchUrl);
         httpRequestMessage.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
         httpRequestMessage.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
         httpRequestMessage.Headers.Add("User-Agent", "SemanticKernelPoc/1.0");
         
+        _logger.LogInformation("📤 HTTP REQUEST DETAILS:");
+        _logger.LogInformation("   Method: {Method}", httpRequestMessage.Method);
+        _logger.LogInformation("   URL: {Url}", httpRequestMessage.RequestUri);
+        _logger.LogInformation("   Headers: {Headers}", string.Join(", ", httpRequestMessage.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}")));
+        
         string responseContent = string.Empty; // Declare outside try block for exception handlers
+        var requestStopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
             _logger.LogInformation("📤 Sending SharePoint REST API request...");
             var response = await _httpClient.SendAsync(httpRequestMessage);
+            requestStopwatch.Stop();
+            
             responseContent = await response.Content.ReadAsStringAsync();
             
-            _logger.LogInformation("📥 SharePoint API Response - Status: {StatusCode}, Content Length: {ContentLength}", 
-                response.StatusCode, responseContent?.Length ?? 0);
+            _logger.LogInformation("📥 === SHAREPOINT API RESPONSE ===");
+            _logger.LogInformation("   Status Code: {StatusCode} ({StatusCodeInt})", response.StatusCode, (int)response.StatusCode);
+            _logger.LogInformation("   Response Time: {ElapsedMs}ms", requestStopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("   Content Length: {ContentLength} characters", responseContent?.Length ?? 0);
+            _logger.LogInformation("   Content Type: {ContentType}", response.Content.Headers.ContentType?.ToString() ?? "unknown");
+            
+            // Log response headers
+            _logger.LogInformation("   Response Headers:");
+            foreach (var header in response.Headers)
+            {
+                _logger.LogInformation("     {HeaderName}: {HeaderValue}", header.Key, string.Join(", ", header.Value));
+            }
             
             // *** LOG THE FULL RAW JSON RESPONSE ***
-            _logger.LogInformation("📋 SharePoint API Raw JSON Response: {RawResponse}", responseContent);
+            if (!string.IsNullOrEmpty(responseContent))
+            {
+                if (responseContent.Length <= 2000)
+                {
+                    _logger.LogInformation("📋 === FULL SHAREPOINT API RESPONSE === {RawResponse}", responseContent);
+                }
+                else
+                {
+                    _logger.LogInformation("📋 === SHAREPOINT API RESPONSE (first 2000 chars) === {RawResponsePreview}...", responseContent[..2000]);
+                    _logger.LogInformation("📋 === SHAREPOINT API RESPONSE (last 500 chars) === ...{RawResponseEnd}", responseContent[^500..]);
+                }
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ SharePoint API returned empty response content");
+            }
             
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("❌ SharePoint Search failed. Status: {StatusCode}, Content: {Content}", 
-                    response.StatusCode, responseContent);
+                _logger.LogError("❌ === SHAREPOINT SEARCH FAILED ===");
+                _logger.LogError("   Status Code: {StatusCode}", response.StatusCode);
+                _logger.LogError("   Reason Phrase: {ReasonPhrase}", response.ReasonPhrase);
+                _logger.LogError("   Error Content: {Content}", responseContent);
+                
+                // Try to parse error details if JSON
+                if (responseContent.TrimStart().StartsWith("{"))
+                {
+                    try
+                    {
+                        var errorDoc = JsonDocument.Parse(responseContent);
+                        if (errorDoc.RootElement.TryGetProperty("error", out var errorElement))
+                        {
+                            if (errorElement.TryGetProperty("message", out var messageElement))
+                            {
+                                _logger.LogError("   Error Message: {ErrorMessage}", messageElement.GetString());
+                            }
+                            if (errorElement.TryGetProperty("code", out var codeElement))
+                            {
+                                _logger.LogError("   Error Code: {ErrorCode}", codeElement.GetString());
+                            }
+                        }
+                    }
+                    catch (Exception parseEx)
+                    {
+                        _logger.LogWarning("⚠️ Failed to parse error response as JSON: {ParseError}", parseEx.Message);
+                    }
+                }
                     
                 if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized || 
                     response.StatusCode == System.Net.HttpStatusCode.Forbidden)
                 {
-                    throw new UnauthorizedAccessException("SharePoint Search access denied. Check permissions and token scopes.");
+                    _logger.LogError("🔒 Authentication/Authorization issue detected");
+                    throw new UnauthorizedAccessException($"SharePoint Search access denied. Status: {response.StatusCode}. Check permissions and token scopes. Response: {responseContent}");
                 }
                 
                 throw new InvalidOperationException($"SharePoint Search request failed: {response.StatusCode} - {responseContent}");
             }
             
             _logger.LogInformation("🔄 Deserializing SharePoint response JSON...");
-            var searchResults = JsonSerializer.Deserialize<object>(responseContent);
-            _logger.LogInformation("✅ SharePoint search completed successfully - JSON deserialized");
+            object searchResults;
+            try
+            {
+                searchResults = JsonSerializer.Deserialize<object>(responseContent);
+                _logger.LogInformation("✅ SharePoint search completed successfully - JSON deserialized");
+                
+                // Try to extract basic info about the results
+                if (searchResults is JsonElement jsonElement)
+                {
+                    _logger.LogInformation("📊 === PARSED RESPONSE ANALYSIS ===");
+                    _logger.LogInformation("   JSON Element Kind: {ValueKind}", jsonElement.ValueKind);
+                    
+                    if (jsonElement.ValueKind == JsonValueKind.Object)
+                    {
+                        var properties = jsonElement.EnumerateObject().Select(p => p.Name).ToList();
+                        _logger.LogInformation("   Top-level properties: [{Properties}]", string.Join(", ", properties));
+                        
+                        // Look for specific SharePoint search response properties
+                        if (jsonElement.TryGetProperty("PrimaryQueryResult", out var primaryResult))
+                        {
+                            _logger.LogInformation("   Found PrimaryQueryResult");
+                            if (primaryResult.TryGetProperty("RelevantResults", out var relevantResults))
+                            {
+                                _logger.LogInformation("   Found RelevantResults");
+                                if (relevantResults.TryGetProperty("Table", out var table))
+                                {
+                                    _logger.LogInformation("   Found Table");
+                                    if (table.TryGetProperty("Rows", out var rows) && rows.ValueKind == JsonValueKind.Array)
+                                    {
+                                        _logger.LogInformation("   Found Rows array with {RowCount} items", rows.GetArrayLength());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (JsonException jsonEx)
+            {
+                _logger.LogError(jsonEx, "❌ JSON parsing error for SharePoint response");
+                _logger.LogError("   JSON Error Position: {Position}", jsonEx.BytePositionInLine);
+                _logger.LogError("   JSON Error Path: {Path}", jsonEx.Path ?? "(unknown)");
+                _logger.LogError("   Response content that failed to parse: {ResponseContent}", responseContent);
+                throw new InvalidOperationException($"Failed to parse SharePoint JSON response: {jsonEx.Message}", jsonEx);
+            }
             
             return searchResults;
         }
-        catch (JsonException jsonEx)
+        catch (HttpRequestException httpEx)
         {
-            _logger.LogError(jsonEx, "❌ JSON parsing error for SharePoint response - Position: {Position}, Path: {Path}", 
-                jsonEx.BytePositionInLine, jsonEx.Path);
-            _logger.LogError("🔍 Response content that failed to parse: {ResponseContent}", responseContent);
-            throw new InvalidOperationException($"Failed to parse SharePoint JSON response: {jsonEx.Message}", jsonEx);
+            requestStopwatch.Stop();
+            _logger.LogError(httpEx, "❌ HTTP request error during SharePoint search");
+            _logger.LogError("   Request Time: {ElapsedMs}ms", requestStopwatch.ElapsedMilliseconds);
+            _logger.LogError("   HTTP Error Message: {Message}", httpEx.Message);
+            throw new InvalidOperationException($"HTTP error executing SharePoint search: {httpEx.Message}", httpEx);
+        }
+        catch (TaskCanceledException timeoutEx)
+        {
+            requestStopwatch.Stop();
+            _logger.LogError(timeoutEx, "❌ Request timeout during SharePoint search");
+            _logger.LogError("   Request Time: {ElapsedMs}ms", requestStopwatch.ElapsedMilliseconds);
+            throw new InvalidOperationException($"SharePoint search request timed out after {requestStopwatch.ElapsedMilliseconds}ms", timeoutEx);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error executing SharePoint search request");
+            requestStopwatch.Stop();
+            _logger.LogError(ex, "❌ Unexpected error executing SharePoint search request");
+            _logger.LogError("   Request Time: {ElapsedMs}ms", requestStopwatch.ElapsedMilliseconds);
+            _logger.LogError("   Exception Type: {ExceptionType}", ex.GetType().Name);
             throw;
         }
     }
@@ -894,34 +1143,20 @@ public class SharePointSearchService : ISharePointSearchService
                 _logger.LogWarning("❌ No Table found in search response");
                 _logger.LogWarning("🔍 Available RelevantResults properties: [{Properties}]", 
                     string.Join(", ", relevantResults.EnumerateObject().Select(p => p.Name)));
-                return response;
-            }
-            _logger.LogInformation("✅ Found Table");
-
-            // Log Table structure
-            var tableProps = table.EnumerateObject().Select(p => p.Name).ToList();
-            _logger.LogInformation("🔍 Table properties: [{Properties}]", string.Join(", ", tableProps));
-
-            // SharePoint format: Table.Rows is a direct array
-            if (!table.TryGetProperty("Rows", out JsonElement rowsArray) || rowsArray.ValueKind != JsonValueKind.Array)
-            {
-                _logger.LogWarning("❌ No Rows array found in Table structure or wrong type");
-                _logger.LogWarning("🔍 Available Table properties: [{Properties}]", 
-                    string.Join(", ", table.EnumerateObject().Select(p => p.Name)));
-                if (table.TryGetProperty("Rows", out var rowsElement))
+                if (relevantResults.TryGetProperty("Rows", out var rowsElement))
                 {
                     _logger.LogWarning("🔍 Rows element type: {ValueKind}", rowsElement.ValueKind);
                 }
                 return response;
             }
 
-            var rowCount = rowsArray.GetArrayLength();
+            var rowCount = table.GetArrayLength();
             _logger.LogInformation("✅ Found Rows array with {RowCount} items", rowCount);
 
             // Parse each result row
             for (int i = 0; i < rowCount; i++)
             {
-                var row = rowsArray[i];
+                var row = table[i];
                 _logger.LogInformation("🔄 Processing row {RowIndex} of {TotalRows}", i + 1, rowCount);
                 
                 try

@@ -18,8 +18,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.ComponentModel;
 using System.Text;
-using ModelContextProtocol;
+using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+using ChatMessage = SemanticKernelPoc.Api.Models.ChatMessage;
+using ChatResponse = SemanticKernelPoc.Api.Models.ChatResponse;
 
 namespace SemanticKernelPoc.Api.Controllers;
 
@@ -28,10 +30,12 @@ namespace SemanticKernelPoc.Api.Controllers;
 [Route("api/[controller]")]
 public class ChatController(
     ILogger<ChatController> logger,
-    IConversationMemoryService conversationMemory) : ControllerBase
+    IConversationMemoryService conversationMemory,
+    IConfiguration configuration) : ControllerBase
 {
     private readonly ILogger<ChatController> _logger = logger;
     private readonly IConversationMemoryService _conversationMemory = conversationMemory;
+    private readonly IConfiguration _configuration = configuration;
 
     [HttpPost]
     public async Task<ActionResult<ChatResponse>> PostMessage([FromBody] ChatMessage chatMessage)
@@ -270,22 +274,10 @@ public class ChatController(
         kernel.Plugins.AddFromType<MailPlugin>("MailPlugin", serviceProvider);
         kernel.Plugins.AddFromType<ToDoPlugin>("ToDoPlugin", serviceProvider);
 
-        // Add SharePoint MCP Plugin with proper token context
-        if (!string.IsNullOrEmpty(accessToken))
-        {
-            // The user token is already added to kernel.Data above, which the SharePoint plugin will access
-            // Register SharePoint MCP Plugin
-            kernel.Plugins.AddFromType<SemanticKernelPoc.Api.Plugins.SharePoint.SharePointMcpPlugin>("SharePointMcpPlugin", serviceProvider);
-            
-            _logger.LogInformation("Added OneDrive, Calendar, Mail, ToDo, and SharePoint MCP plugins for user {UserId}.", userOid);
-        }
-        else
-        {
-            _logger.LogWarning("⚠️ No access token available for SharePoint MCP plugin");
-            
-            // Add other plugins without SharePoint
-            _logger.LogInformation("Added OneDrive, Calendar, Mail, and ToDo plugins for user {UserId} (SharePoint unavailable due to missing token).", userOid);
-        }
+        // Add MCP tools dynamically
+        await AddMcpToolsToKernelAsync(kernel, accessToken);
+
+        _logger.LogInformation("Added OneDrive, Calendar, Mail, ToDo plugins and MCP tools for user {UserId}.", userOid);
 
         // Log available functions for debugging
         var availableFunctions = kernel.Plugins.SelectMany(p => p.Select(f => $"{p.Name}.{f.Name}")).ToList();
@@ -294,25 +286,312 @@ public class ChatController(
         return kernel;
     }
 
-    [HttpGet("sessions")]
-    public async Task<ActionResult<IEnumerable<string>>> GetUserSessions()
+    private async Task AddMcpToolsToKernelAsync(Kernel kernel, string userAccessToken)
     {
         try
         {
-            var userId = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
-            if (string.IsNullOrEmpty(userId))
-            {
-                return BadRequest("User ID not found");
-            }
+            _logger.LogInformation("🔗 === MCP INTEGRATION START ===");
+            _logger.LogInformation("🔗 Attempting to connect to MCP server for SharePoint tools...");
+            
+            // Get MCP server URL from configuration
+            var mcpServerUrl = _configuration["McpServer:Url"] ?? "https://localhost:31339";
+            _logger.LogInformation("🌐 MCP Server URL: {Url}", mcpServerUrl);
 
-            var sessions = await _conversationMemory.GetUserSessionsAsync(userId);
-            return Ok(sessions);
+            // Try to implement proper MCP client connection using SSE transport
+            IMcpClient mcpClient = null;
+            try
+            {
+                _logger.LogInformation("🔧 Attempting to create MCP client using ModelContextProtocol v0.2.0-preview.2...");
+                
+                // Create the SSE endpoint URL
+                var mcpServerEndpoint = new Uri($"{mcpServerUrl}/sse");
+                _logger.LogInformation("📡 Attempting MCP connection to: {Endpoint}", mcpServerEndpoint);
+                
+                // Use the correct constructor pattern from the official examples
+                var sseClientTransportOptions = new SseClientTransportOptions
+                {
+                    Endpoint = mcpServerEndpoint,
+                    Name = "SharePointMCP"
+                };
+                
+                var sseClientTransport = new SseClientTransport(sseClientTransportOptions);
+                
+                // Create the MCP client
+                mcpClient = await McpClientFactory.CreateAsync(sseClientTransport);
+                _logger.LogInformation("🎉 Successfully created MCP client!");
+                
+                // Test the connection by trying to list tools using the correct method name
+                _logger.LogInformation("🔍 Testing MCP client connection by listing tools...");
+                
+                // Use the correct method name and proper async/await pattern
+                var mcpTools = await mcpClient.ListToolsAsync();
+                
+                if (mcpTools == null)
+                {
+                    _logger.LogWarning("⚠️ ListToolsAsync returned null - MCP server may not be responding");
+                    return;
+                }
+                
+                var toolsCount = mcpTools.Count();
+                _logger.LogInformation("🔧 Found {ToolCount} tools from MCP server", toolsCount);
+                
+                if (mcpTools.Any())
+                {
+                    _logger.LogInformation("📋 === MCP TOOLS DISCOVERED ===");
+                    
+                    // Convert MCP tools to Kernel functions using proper types
+                    var kernelFunctions = new List<KernelFunction>();
+                    var toolIndex = 0;
+                    
+                    foreach (var tool in mcpTools)
+                    {
+                        var toolName = tool.Name ?? "UnknownTool";
+                        var toolDescription = tool.Description ?? "No description";
+                        _logger.LogInformation("📝 Processing MCP tool: {ToolName} - {Description}", toolName, toolDescription);
+                        
+                        // Create a kernel function that wraps the MCP tool
+                        var kernelFunction = CreateKernelFunctionFromMcpTool(tool, mcpClient, userAccessToken, toolIndex);
+                        kernelFunctions.Add(kernelFunction);
+                        
+                        _logger.LogInformation("✅ Created kernel function for MCP tool: {ToolName}", toolName);
+                        toolIndex++;
+                    }
+                    
+                    // Add the functions as a plugin
+                    kernel.Plugins.AddFromFunctions("SharePointMCP", kernelFunctions);
+                    _logger.LogInformation("🎯 Added {FunctionCount} SharePoint MCP functions to kernel", kernelFunctions.Count);
+                    
+                    // Log the actual function names that were added
+                    var functionNames = kernelFunctions.Select(f => f.Name).ToList();
+                    _logger.LogInformation("📌 Available SharePoint functions: {Functions}", string.Join(", ", functionNames));
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ No tools found on MCP server - SharePoint functionality will be unavailable");
+                }
+            }
+            catch (Exception transportEx)
+            {
+                _logger.LogError(transportEx, "❌ Failed to create MCP client connection");
+                _logger.LogWarning("📋 This may be expected if the MCP server is not running");
+                _logger.LogInformation("💡 To enable SharePoint: Start the MCP server on {Url}", mcpServerUrl);
+            }
+            
+            _logger.LogInformation("✅ === MCP INTEGRATION COMPLETE ===");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting user sessions");
-            return StatusCode(500, "Error retrieving sessions");
+            _logger.LogError(ex, "❌ Failed to prepare MCP integration - SharePoint functionality will be unavailable");
+            // Don't fail the entire request if MCP server preparation fails
         }
+    }
+
+    private KernelFunction CreateKernelFunctionFromMcpTool(object tool, IMcpClient mcpClient, string userAccessToken, int toolIndex)
+    {
+        // Extract tool properties using proper type access instead of reflection
+        var toolName = tool.GetType().GetProperty("Name")?.GetValue(tool)?.ToString() ?? $"McpTool{toolIndex}";
+        var toolDescription = tool.GetType().GetProperty("Description")?.GetValue(tool)?.ToString() ?? "MCP tool from SharePoint server";
+        
+        _logger.LogInformation("🔧 Creating kernel function for MCP tool: {ToolName} | Description: {Description}", toolName, toolDescription);
+        
+        // Create the actual kernel function that calls the MCP tool
+        return KernelFunctionFactory.CreateFromMethod(
+            ([Description("Search query")] string query = "", 
+             [Description("Number of results")] int count = 5, 
+             [Description("List name")] string listName = "") =>
+            {
+                return Task.Run(async () =>
+                {
+                    try
+                    {
+                        _logger.LogInformation("🚀 === MCP TOOL CALL START: {ToolName} ===", toolName);
+                        _logger.LogInformation("📥 INPUT PARAMETERS:");
+                        _logger.LogInformation("   🔍 Query: '{Query}'", query);
+                        _logger.LogInformation("   📊 Count: {Count}", count);
+                        _logger.LogInformation("   📁 List Name: '{ListName}'", listName);
+                        _logger.LogInformation("   🔑 Access Token Length: {TokenLength} chars", userAccessToken?.Length ?? 0);
+                        
+                        // Prepare parameters for the MCP tool call with detailed logging
+                        var parameters = new Dictionary<string, object>();
+                        
+                        // Add common parameters that SharePoint tools might expect
+                        if (!string.IsNullOrEmpty(query))
+                        {
+                            parameters["query"] = query;
+                            _logger.LogInformation("   ✅ Added query parameter: '{Query}'", query);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("   ⚠️ Query parameter is empty - this might cause no results");
+                        }
+                        
+                        if (count > 0)
+                        {
+                            parameters["count"] = count;
+                            _logger.LogInformation("   ✅ Added count parameter: {Count}", count);
+                        }
+                        
+                        if (!string.IsNullOrEmpty(listName))
+                        {
+                            parameters["listName"] = listName;
+                            _logger.LogInformation("   ✅ Added listName parameter: '{ListName}'", listName);
+                        }
+                        
+                        if (!string.IsNullOrEmpty(userAccessToken))
+                        {
+                            parameters["accessToken"] = userAccessToken;
+                            _logger.LogInformation("   ✅ Added accessToken parameter (length: {Length})", userAccessToken.Length);
+                        }
+                        else
+                        {
+                            _logger.LogError("   ❌ CRITICAL: Access token is missing - SharePoint calls will likely fail!");
+                        }
+                        
+                        // Try different parameter variations that the SharePoint MCP server might expect
+                        parameters["searchQuery"] = query;  // Alternative parameter name
+                        parameters["limit"] = count;        // Alternative parameter name
+                        parameters["maxResults"] = count;   // Alternative parameter name
+                        
+                        _logger.LogInformation("📤 FINAL PARAMETERS being sent to MCP server:");
+                        foreach (var param in parameters)
+                        {
+                            if (param.Key == "accessToken")
+                            {
+                                _logger.LogInformation("   🔑 {Key}: [TOKEN-{Length}-CHARS]", param.Key, param.Value?.ToString()?.Length ?? 0);
+                            }
+                            else
+                            {
+                                _logger.LogInformation("   📋 {Key}: '{Value}'", param.Key, param.Value);
+                            }
+                        }
+                        
+                        _logger.LogInformation("🌐 Calling MCP server tool: {ToolName}", toolName);
+                        
+                        // Call the MCP tool using the proper interface
+                        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                        var result = await mcpClient.CallToolAsync(toolName, parameters);
+                        stopwatch.Stop();
+                        
+                        _logger.LogInformation("⏱️ MCP call completed in {ElapsedMs}ms", stopwatch.ElapsedMilliseconds);
+                        
+                        // Detailed response analysis
+                        _logger.LogInformation("📥 === MCP RESPONSE ANALYSIS ===");
+                        
+                        if (result == null)
+                        {
+                            _logger.LogError("❌ CRITICAL: MCP tool returned NULL result");
+                            _logger.LogError("   This could indicate:");
+                            _logger.LogError("   - MCP server error");
+                            _logger.LogError("   - SharePoint authentication failure");
+                            _logger.LogError("   - Invalid parameters");
+                            _logger.LogError("   - SharePoint service unavailable");
+                            return $"❌ SharePoint search failed: MCP tool {toolName} returned no data. Please check your SharePoint access and try again.";
+                        }
+                        
+                        var resultString = result.ToString();
+                        var resultLength = resultString?.Length ?? 0;
+                        
+                        _logger.LogInformation("📄 Response length: {Length} characters", resultLength);
+                        _logger.LogInformation("📝 Response type: {Type}", result.GetType().Name);
+                        
+                        if (resultLength == 0)
+                        {
+                            _logger.LogWarning("⚠️ MCP tool returned empty response");
+                            return $"🔍 No SharePoint sites found matching your query '{query}'. Try a different search term or check your SharePoint access.";
+                        }
+                        
+                        if (resultLength < 50)
+                        {
+                            _logger.LogInformation("📄 Short response (likely error): '{Response}'", resultString);
+                        }
+                        else
+                        {
+                            _logger.LogInformation("📄 Response preview (first 200 chars): '{Preview}...'", 
+                                resultString.Length > 200 ? resultString.Substring(0, 200) : resultString);
+                        }
+                        
+                        // Check for common error patterns
+                        if (resultString.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                            resultString.Contains("unauthorized", StringComparison.OrdinalIgnoreCase) ||
+                            resultString.Contains("forbidden", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogError("❌ ERROR DETECTED in MCP response: {Response}", resultString);
+                            return $"❌ SharePoint search error: {resultString}";
+                        }
+                        
+                        // Check if response looks like JSON data
+                        if (resultString.TrimStart().StartsWith("{") || resultString.TrimStart().StartsWith("["))
+                        {
+                            _logger.LogInformation("✅ Response appears to be JSON data - likely successful");
+                            
+                            // Try to parse and count results
+                            try
+                            {
+                                var jsonDoc = JsonDocument.Parse(resultString);
+                                if (jsonDoc.RootElement.ValueKind == JsonValueKind.Array)
+                                {
+                                    var arrayLength = jsonDoc.RootElement.GetArrayLength();
+                                    _logger.LogInformation("📊 JSON array contains {Count} items", arrayLength);
+                                    
+                                    if (arrayLength == 0)
+                                    {
+                                        return $"🔍 No SharePoint sites found for query '{query}'. The search completed successfully but returned no results.";
+                                    }
+                                }
+                                else if (jsonDoc.RootElement.TryGetProperty("value", out var valueElement) && valueElement.ValueKind == JsonValueKind.Array)
+                                {
+                                    var arrayLength = valueElement.GetArrayLength();
+                                    _logger.LogInformation("📊 JSON 'value' array contains {Count} items", arrayLength);
+                                    
+                                    if (arrayLength == 0)
+                                    {
+                                        return $"🔍 No SharePoint sites found for query '{query}'. The search completed successfully but returned no results.";
+                                    }
+                                }
+                            }
+                            catch (JsonException ex)
+                            {
+                                _logger.LogWarning(ex, "⚠️ Failed to parse response as JSON, treating as plain text");
+                            }
+                        }
+                        
+                        _logger.LogInformation("✅ === MCP TOOL CALL SUCCESS: {ToolName} ===", toolName);
+                        
+                        return resultString ?? $"✅ SharePoint search completed successfully using {toolName}";
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "❌ === MCP TOOL CALL FAILED: {ToolName} ===", toolName);
+                        _logger.LogError("   Exception Type: {ExceptionType}", ex.GetType().Name);
+                        _logger.LogError("   Exception Message: {Message}", ex.Message);
+                        
+                        if (ex.InnerException != null)
+                        {
+                            _logger.LogError("   Inner Exception: {InnerMessage}", ex.InnerException.Message);
+                        }
+                        
+                        // Provide helpful error messages based on exception type
+                        if (ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return $"⏱️ SharePoint search timed out. The server may be slow or unavailable. Please try again.";
+                        }
+                        else if (ex.Message.Contains("unauthorized", StringComparison.OrdinalIgnoreCase) ||
+                                ex.Message.Contains("forbidden", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return $"🔒 Access denied to SharePoint. Please check your permissions and try signing in again.";
+                        }
+                        else if (ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return $"🔍 SharePoint service not found. Please check if the SharePoint MCP server is running.";
+                        }
+                        
+                        return $"❌ SharePoint search failed: {ex.Message}. Please try again or contact support.";
+                    }
+                });
+            },
+            functionName: toolName,
+            description: toolDescription
+        );
     }
 
     [HttpGet("sessions/{sessionId}/history")]
@@ -373,12 +652,17 @@ CRITICAL: YOU MUST CALL FUNCTIONS - DO NOT GIVE GENERIC RESPONSES!
 MANDATORY FUNCTION CALLING RULES:
 
 1. SHAREPOINT SITES - When user asks for SharePoint sites, you MUST call one of these functions:
-   - SearchSharePointSites - for general ""SharePoint sites"" requests
-   - SearchRecentSharePointSites - for ""recent"", ""last N"", ""latest"" requests  
-   - FindSharePointSitesByKeyword - for specific search terms
-   - SearchSharePointSitesAdvanced - for complex queries
+   - For general SharePoint requests: ""SharePoint sites"", ""my sites"", ""show sites"" → CALL ANY available SharePoint function
+   - For recent sites: ""recent SharePoint"", ""last N sites"", ""latest sites"" → CALL SearchRecentSharePointSites if available
+   - For search queries: ""find SharePoint"", ""search for [term]"" → CALL SearchSharePointSites or FindSharePointSitesByKeyword
+   - For advanced searches: complex queries → CALL SearchSharePointSitesAdvanced if available
    
-   Example: User says ""show me my last 3 sharepoint sites"" → CALL SearchRecentSharePointSites with count=3
+   CRITICAL SharePoint Examples:
+   - User: ""show me my sharepoint sites"" → MUST call available SharePoint MCP function
+   - User: ""find sharepoint sites about project"" → MUST call SharePoint search function with query=""project""
+   - User: ""my recent sharepoint sites"" → MUST call SharePoint function (any available)
+   
+   ALWAYS try SharePoint functions when users mention: sharepoint, sites, collaboration, documents, teams
 
 2. TASK/TODO QUERIES - ALWAYS use ToDoPlugin functions for:
    - ""my tasks"", ""show tasks"", ""get tasks"", ""task list"", ""to-do"", ""todos""
@@ -404,6 +688,11 @@ MANDATORY FUNCTION CALLING RULES:
 5. ONEDRIVE QUERIES - ALWAYS use OneDrivePlugin functions for:
    - ""files"", ""documents"", ""OneDrive""
    - ""recent files"", ""my documents""
+
+DEBUGGING NOTES:
+- SharePoint MCP functions should be available and will be called automatically
+- If SharePoint search returns no results, that's normal feedback - don't assume the function failed
+- Always attempt function calls first, even if you're unsure about the data
 
 NEVER say ""I cannot access"" or ""I don't have the ability"" - these functions ARE available.
 ALWAYS attempt to call the appropriate function first.
@@ -444,5 +733,26 @@ Always be helpful, accurate, and call the appropriate functions to fulfill user 
     private string GenerateSessionId(string userId)
     {
         return $"session_{userId}_{DateTime.UtcNow:yyyyMMdd}";
+    }
+
+    [HttpGet("sessions")]
+    public async Task<ActionResult<IEnumerable<string>>> GetUserSessions()
+    {
+        try
+        {
+            var userId = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
+            if (string.IsNullOrEmpty(userId))
+            {
+                return BadRequest("User ID not found");
+            }
+
+            var sessions = await _conversationMemory.GetUserSessionsAsync(userId);
+            return Ok(sessions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting user sessions");
+            return StatusCode(500, "Error retrieving sessions");
+        }
     }
 }

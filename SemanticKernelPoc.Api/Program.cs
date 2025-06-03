@@ -5,7 +5,6 @@ using Microsoft.SemanticKernel;
 using SemanticKernelPoc.Api.Models;
 using SemanticKernelPoc.Api.Services.Graph;
 using SemanticKernelPoc.Api.Services.Memory;
-using SemanticKernelPoc.Api.Services;
 using SemanticKernelPoc.Api.Services.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -65,29 +64,6 @@ builder.Services.AddSingleton<IGraphClientFactory>(sp =>
 builder.Services.AddScoped<ICardBuilderService, CardBuilderService>();
 builder.Services.AddScoped<IAnalysisModeService, AnalysisModeService>();
 builder.Services.AddScoped<ITextProcessingService, TextProcessingService>();
-
-// Add HttpClient for MCP communication
-builder.Services.AddHttpClient<IMcpClientService, McpClientService>(client =>
-{
-    // Configure HttpClient for MCP server communication
-    client.Timeout = TimeSpan.FromSeconds(30);
-})
-.ConfigurePrimaryHttpMessageHandler(() =>
-{
-    var handler = new HttpClientHandler();
-    
-    // Accept self-signed certificates in development
-    if (builder.Environment.IsDevelopment())
-    {
-        handler.ClientCertificateOptions = ClientCertificateOption.Manual;
-        handler.ServerCertificateCustomValidationCallback = (httpRequestMessage, cert, cetChain, policyErrors) => true;
-    }
-    
-    return handler;
-});
-
-// Add MCP Client Service
-builder.Services.AddScoped<IMcpClientService, McpClientService>();
 
 // Semantic Kernel configuration (global - for AI service only)
 builder.Services.AddSingleton(sp =>
