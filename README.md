@@ -52,13 +52,13 @@ User Input ──▶ Intent Analysis ──▶ Function Selection ──▶ Micr
 ### MCP Integration Flow
 ```
 SharePoint Query ──▶ MCP Client ──▶ SharePoint MCP Server ──▶ SharePoint API ──▶ Structured JSON
-        │                 │                    │                       │                │
-        ▼                 ▼                    ▼                       ▼                ▼
-┌─────────────┐  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  ┌─────────────┐
-│ User asks   │  │ SSE Client  │    │ Tool        │    │ SharePoint  │  │ Site cards  │
-│ "SharePoint │  │ Transport   │    │ Discovery   │    │ Graph API   │  │ displayed   │
-│ sites"      │  │ Connection  │    │ & Execution │    │ with OAuth  │  │ in React    │
-└─────────────┘  └─────────────┘    └─────────────┘    └─────────────┘  └─────────────┘
+       │                   │                     │                       │                │
+       ▼                   ▼                     ▼                       ▼                ▼
+┌─────────────┐    ┌─────────────┐       ┌─────────────┐       ┌─────────────┐    ┌─────────────┐
+│ User asks   │    │ SSE Client  │       │ Tool        │       │ SharePoint  │    │ Site cards  │
+│ "SharePoint │    │ Transport   │       │ Discovery   │       │ Graph API   │    │ displayed   │
+│ sites"      │    │ Connection  │       │ & Execution │       │ with OAuth  │    │ in React    │
+└─────────────┘    └─────────────┘       └─────────────┘       └─────────────┘    └─────────────┘
 ```
 
 ## ✨ Key Features
