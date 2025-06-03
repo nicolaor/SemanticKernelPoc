@@ -44,14 +44,17 @@ User Input ──▶ Intent Analysis ──▶ Function Selection ──▶ Grap
 
 ### MCP Integration Flow
 ```
-SharePoint Query ──▶ MCP Client ──▶ MCP Server ──▶ Graph API ──▶ JSON Response
-       │                  │              │             │             │
-       ▼                  ▼              ▼             ▼             ▼
-┌─────────────┐    ┌─────────────┐ ┌─────────────┐ ┌──────────┐ ┌──────────┐
-│ User asks   │    │ SSE Client  │ │ Tool Exec   │ │ SP Graph │ │ Site     │
-│ "SP sites"  │    │ Transport   │ │ Discovery   │ │ + OAuth  │ │ Cards    │
-└─────────────┘    └─────────────┘ └─────────────┘ └──────────┘ └──────────┘
+SharePoint Query ──▶ MCP Client ──▶ MCP Server ──▶ SharePoint API ──▶ JSON Response
+       │                  │              │               │               │
+       ▼                  ▼              ▼               ▼               ▼
+┌─────────────┐    ┌─────────────┐ ┌─────────────┐ ┌──────────────┐ ┌──────────┐
+│ User asks   │    │ SSE Client  │ │ Tool Exec   │ │ SharePoint   │ │ Site     │
+│ "SP sites"  │    │ Transport   │ │ Discovery   │ │ REST API +   │ │ Cards    │
+│             │    │ Connection  │ │ & Execution │ │ SP OAuth     │ │ Rendered │
+└─────────────┘    └─────────────┘ └─────────────┘ └──────────────┘ └──────────┘
 ```
+
+**Note:** SharePoint integration uses both Microsoft Graph Sites.Read.All and dedicated SharePoint API permissions for comprehensive content access.
 
 ## ✨ Key Features
 
@@ -67,7 +70,7 @@ SharePoint Query ──▶ MCP Client ──▶ MCP Server ──▶ Graph API �
 - **📅 Calendar**: View events, schedule meetings, check availability
 - **📁 OneDrive**: Browse files, search content, manage documents
 - **📝 Tasks**: Create and manage To Do items with priorities and due dates
-- **🔍 SharePoint**: Find sites and content across tenant via MCP protocol
+- **🔍 SharePoint**: Advanced site discovery, content search, and taxonomy access via MCP protocol with dedicated SharePoint API permissions
 
 ### 🛡️ **Enterprise Security & Authentication**
 - **Azure AD Authentication**: Secure MSAL-based token handling
@@ -103,7 +106,8 @@ SharePoint Query ──▶ MCP Client ──▶ MCP Server ──▶ Graph API �
 - **Azure OpenAI** with GPT-4 for natural language processing
 - **Function Calling** for automatic API selection
 - **Structured Output** with JSON schema validation
-- **Microsoft Graph API** for all Microsoft 365 services
+- **Microsoft Graph API** for Microsoft 365 services integration
+- **SharePoint REST API** for advanced SharePoint operations via MCP
 
 ## 🚀 Quick Start
 
@@ -161,8 +165,9 @@ After running `./start-all.sh`:
    ```
 
 2. **Configure API Permissions**:
+   
+   **Microsoft Graph - Delegated permissions:**
    ```
-   Microsoft Graph → Delegated permissions:
    ✅ User.Read                 (Basic profile)
    ✅ Mail.Read                 (Read emails)
    ✅ Mail.Send                 (Send emails)
@@ -173,7 +178,16 @@ After running `./start-all.sh`:
    ✅ Tasks.ReadWrite           (Manage To Do tasks)
    ```
 
+   **SharePoint - Delegated permissions:**
+   ```
+   ✅ Sites.Read.All            (Read SharePoint sites and content)
+   ✅ Sites.Search.All          (Search SharePoint content)
+   ✅ TermStore.Read.All        (Read SharePoint taxonomy)
+   ```
+
 3. **Grant Admin Consent** (if required by your organization)
+
+**Note:** SharePoint permissions are used by the MCP server for advanced SharePoint search and content discovery beyond what's available through Microsoft Graph APIs.
 
 ### Application Configuration
 
@@ -408,8 +422,11 @@ curl https://localhost:31339/tools
 ### Authentication Issues
 - Verify Azure AD app registration configuration
 - Check redirect URI matches exactly: `https://localhost:31337`
-- Ensure proper API permissions are granted and consented
+- Ensure proper API permissions are granted and consented:
+  - **Microsoft Graph**: User.Read, Mail.Read, Mail.Send, Calendars.Read, Calendars.ReadWrite, Files.Read.All, Sites.Read.All, Tasks.ReadWrite
+  - **SharePoint**: Sites.Read.All, Sites.Search.All, TermStore.Read.All
 - Verify tenant ID and client ID in both config files
+- Check that admin consent has been granted for SharePoint permissions
 
 ### Service Startup Issues
 ```bash
@@ -434,9 +451,13 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 
 ### MCP Connection Issues
 - Verify MCP server is running on port 31339
-- Check SharePoint authentication configuration
-- Review MCP server logs for specific errors
-- Ensure user has SharePoint access permissions
+- Check SharePoint authentication configuration and permissions:
+  - Ensure Sites.Read.All, Sites.Search.All, and TermStore.Read.All permissions are granted
+  - Verify admin consent for SharePoint-specific permissions
+  - Check that the service account has access to SharePoint sites
+- Review MCP server logs for specific SharePoint API errors
+- Ensure user has SharePoint access permissions for target sites
+- Test SharePoint connectivity: `curl https://localhost:31339/tools`
 
 ## 📈 Performance Considerations
 
