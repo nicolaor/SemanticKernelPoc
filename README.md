@@ -54,7 +54,7 @@ SharePoint Query ──▶ MCP Client ──▶ MCP Server ──▶ SharePoint 
 └─────────────┘    └─────────────┘ └─────────────┘ └──────────────┘ └──────────┘
 ```
 
-**Note:** SharePoint integration uses both Microsoft Graph Sites.Read.All and dedicated SharePoint API permissions for comprehensive content access.
+**Note:** SharePoint integration uses SharePoint Search REST API (`/_api/search/query`) with Sites.Search.All permissions for comprehensive site discovery and search capabilities. Microsoft Graph is only used for tenant discovery and token exchange.
 
 ## ✨ Key Features
 
@@ -70,7 +70,7 @@ SharePoint Query ──▶ MCP Client ──▶ MCP Server ──▶ SharePoint 
 - **📅 Calendar**: View events, schedule meetings, check availability
 - **📁 OneDrive**: Browse files, search content, manage documents
 - **📝 Tasks**: Create and manage To Do items with priorities and due dates
-- **🔍 SharePoint**: Advanced site discovery, content search, and taxonomy access via MCP protocol with dedicated SharePoint API permissions
+- **🔍 SharePoint**: Site discovery and content search via MCP protocol with dedicated SharePoint API permissions
 
 ### 🛡️ **Enterprise Security & Authentication**
 - **Azure AD Authentication**: Secure MSAL-based token handling
@@ -157,37 +157,182 @@ After running `./start-all.sh`:
 
 ### Azure AD App Registration
 
-1. **Create App Registration** in Azure Portal:
-   ```
-   Azure Active Directory → App registrations → New registration
-   Name: "Semantic Kernel PoC"
-   Redirect URI: https://localhost:31337 (Single-page application)
-   ```
+#### 1. **Create App Registration** in Azure Portal:
+```
+Azure Active Directory → App registrations → New registration
+Name: "Semantic Kernel PoC"
+Supported account types: Accounts in this organizational directory only (Single tenant)
+```
 
-2. **Configure API Permissions**:
-   
-   **Microsoft Graph - Delegated permissions:**
-   ```
-   ✅ User.Read                 (Basic profile)
-   ✅ Mail.Read                 (Read emails)
-   ✅ Mail.Send                 (Send emails)
-   ✅ Calendars.Read            (Read calendar)
-   ✅ Calendars.ReadWrite       (Manage calendar)
-   ✅ Files.Read.All            (Read OneDrive files)
-   ✅ Sites.Read.All            (Read SharePoint sites)
-   ✅ Tasks.ReadWrite           (Manage To Do tasks)
-   ```
+#### 2. **Configure Redirect URIs** (Authentication Tab):
 
-   **SharePoint - Delegated permissions:**
-   ```
-   ✅ Sites.Read.All            (Read SharePoint sites and content)
-   ✅ Sites.Search.All          (Search SharePoint content)
-   ✅ TermStore.Read.All        (Read SharePoint taxonomy)
-   ```
+**Platform: Single-page application (SPA)**
+```
+✅ https://localhost:31337                     (React client authentication)
+```
 
-3. **Grant Admin Consent** (if required by your organization)
+**Platform: Web**
+```
+✅ https://localhost:31338/signin-oidc         (API OIDC callback)
+```
 
-**Note:** SharePoint permissions are used by the MCP server for advanced SharePoint search and content discovery beyond what's available through Microsoft Graph APIs.
+**Logout URLs (optional)**
+```
+✅ https://localhost:31337                     (Post-logout redirect)
+```
+
+**Advanced settings:**
+- ✅ **Allow public client flows**: Yes (enables device code flow)
+- ✅ **Enable the following mobile and desktop flows**: Yes
+
+#### 3. **API Permissions** (API permissions Tab):
+
+**Microsoft Graph - Delegated permissions:**
+```
+✅ openid                    (Sign in and read user profile)
+✅ profile                   (View users' basic profile)  
+✅ email                     (View users' email address)
+✅ User.Read                 (Read user profile)
+✅ Mail.Read                 (Read user mail)
+✅ Mail.Send                 (Send mail as user)
+✅ Calendars.Read            (Read user calendars)
+✅ Calendars.ReadWrite       (Have full access to user calendars)
+✅ Files.Read.All            (Read files in all site collections)
+✅ Sites.Read.All            (Read items in all site collections)
+✅ Tasks.ReadWrite           (Create, read, update and delete user tasks and projects)
+```
+
+**SharePoint - Delegated permissions:**
+```
+✅ Sites.Search.All          (Search SharePoint content)
+```
+
+**Office 365 Exchange Online - Delegated permissions:**
+```
+✅ EWS.AccessAsUser.All      (Access Exchange Web Services as user)
+```
+
+#### 4. **Grant Admin Consent**
+- Click **"Grant admin consent for [Your Organization]"**
+- Confirm: "Yes" to grant consent for all users in the organization
+
+#### 5. **Expose an API** (Expose an API Tab):
+
+**Application ID URI:**
+```
+api://[YOUR_CLIENT_ID]
+```
+
+**Scopes defined by this API:**
+```
+Scope name: access_as_user
+Admin consent display name: Access API as user
+Admin consent description: Allow the application to access the API on behalf of the signed-in user
+Value: access_as_user
+State: Enabled
+Who can consent: Admins and users
+```
+
+**Authorized client applications:**
+```
+Client ID: [YOUR_CLIENT_ID]  (Self-authorization for SPA)
+Authorized scopes: api://[YOUR_CLIENT_ID]/access_as_user
+```
+
+#### 6. **Certificates & Secrets** (Certificates & secrets Tab):
+
+**Client secrets (for MCP server and API):**
+```
+Description: "SemanticKernelPoc API Secret"
+Expires: 12 months (or according to your security policy)
+```
+⚠️ **Important**: Copy the secret value immediately - it won't be shown again!
+
+#### 7. **Token Configuration** (Token configuration Tab):
+
+**Optional claims - ID token:**
+```
+✅ email          (Email address)
+✅ family_name    (Surname)  
+✅ given_name     (Given name)
+✅ upn           (User Principal Name)
+```
+
+**Optional claims - Access token:**
+```
+✅ email          (Email address)
+✅ family_name    (Surname)
+✅ given_name     (Given name)
+✅ upn           (User Principal Name)
+```
+
+#### 8. **Manifest Configuration** (Manifest Tab):
+
+**Critical manifest settings:**
+```json
+{
+  "accessTokenAcceptedVersion": 2,
+  "oauth2RequirePostResponse": false,
+  "oauth2AllowImplicitFlow": true,
+  "oauth2AllowIdTokenImplicitFlow": true,
+  "signInAudience": "AzureADMyOrg"
+}
+```
+
+**Key changes to make:**
+- Set `"accessTokenAcceptedVersion": 2` (OAuth 2.0 tokens)
+- Set `"oauth2AllowImplicitFlow": true` (for SPA authentication)
+- Set `"oauth2AllowIdTokenImplicitFlow": true` (for ID tokens)
+
+#### 9. **API Permissions Summary**
+
+**Why each permission is needed:**
+
+| Permission | Service | Reason |
+|------------|---------|---------|
+| `User.Read` | Graph | Basic user profile for authentication |
+| `Mail.Read` | Graph | Email plugin functionality |
+| `Mail.Send` | Graph | Email composition features |
+| `Calendars.Read` | Graph | Calendar viewing |
+| `Calendars.ReadWrite` | Graph | Calendar management |
+| `Files.Read.All` | Graph | OneDrive file access |
+| `Sites.Read.All` | Graph | SharePoint sites via Graph API |
+| `Tasks.ReadWrite` | Graph | Microsoft To Do integration |
+| `Sites.Search.All` | SharePoint | SharePoint search via REST API |
+| `EWS.AccessAsUser.All` | Exchange | Advanced email operations |
+
+#### 10. **Authentication Flows Used**
+
+**React SPA (Frontend):**
+- **Flow**: Authorization Code Flow with PKCE
+- **Redirect**: `https://localhost:31337`
+- **Tokens**: ID token + Access token
+
+**API Server (Backend):**
+- **Flow**: On-Behalf-Of (OBO) flow
+- **Redirect**: `https://localhost:31338/signin-oidc`
+- **Tokens**: Exchange user token for Graph/SharePoint tokens
+
+**MCP Server:**
+- **Flow**: On-Behalf-Of (OBO) flow
+- **Purpose**: SharePoint Search API access
+- **Tokens**: Exchange user token for SharePoint tokens
+
+#### 11. **Configuration Validation**
+
+**Test your configuration:**
+```bash
+# 1. Check redirect URIs are exactly configured
+curl https://login.microsoftonline.com/[TENANT_ID]/.well-known/openid_configuration
+
+# 2. Test MSAL configuration
+./get-ports.sh  # Shows required redirect URIs
+
+# 3. Verify API exposure
+# Go to Azure Portal → Your App → Expose an API
+# Ensure api://[CLIENT_ID]/access_as_user scope exists
+```
+
 
 ### Application Configuration
 
@@ -420,13 +565,43 @@ curl https://localhost:31339/tools
 ## 🚨 Troubleshooting
 
 ### Authentication Issues
-- Verify Azure AD app registration configuration
-- Check redirect URI matches exactly: `https://localhost:31337`
-- Ensure proper API permissions are granted and consented:
-  - **Microsoft Graph**: User.Read, Mail.Read, Mail.Send, Calendars.Read, Calendars.ReadWrite, Files.Read.All, Sites.Read.All, Tasks.ReadWrite
-  - **SharePoint**: Sites.Read.All, Sites.Search.All, TermStore.Read.All
-- Verify tenant ID and client ID in both config files
-- Check that admin consent has been granted for SharePoint permissions
+
+**Azure AD App Registration:**
+- ✅ Verify app registration is configured as **Single tenant** (`AzureADMyOrg`)
+- ✅ Check redirect URIs match exactly: 
+  - `https://localhost:31337` (Single-page application platform)
+  - `https://localhost:31338/signin-oidc` (Web platform)
+- ✅ Verify **Application ID URI**: `api://[YOUR_CLIENT_ID]`
+- ✅ Ensure **API scope** exists: `api://[YOUR_CLIENT_ID]/access_as_user`
+
+**API Permissions & Consent:**
+- ✅ All required permissions are added (see detailed list above)
+- ✅ **Admin consent granted** for the organization
+- ✅ **SharePoint permissions**: `Sites.Search.All` has admin consent
+- ✅ **Microsoft Graph permissions**: All delegated permissions consented
+
+**Manifest Configuration:**
+- ✅ `"accessTokenAcceptedVersion": 2` (OAuth 2.0 tokens)
+- ✅ `"oauth2AllowImplicitFlow": true` (SPA authentication)
+- ✅ `"oauth2AllowIdTokenImplicitFlow": true` (ID token flow)
+- ✅ `"signInAudience": "AzureADMyOrg"` (single tenant)
+
+**Configuration Files:**
+- ✅ Verify tenant ID and client ID in both config files match Azure AD app
+- ✅ Check `api://[CLIENT_ID]/access_as_user` scope is correct in frontend config
+- ✅ Ensure API audience is set to `api://[CLIENT_ID]` in backend config
+
+**Common Token Issues:**
+```bash
+# IDX14100: JWT is not well formed - token missing dots
+# → Check token is being passed correctly from frontend to API
+
+# MSAL errors - invalid scope
+# → Verify api://[CLIENT_ID]/access_as_user scope exists and is authorized
+
+# Audience validation failed  
+# → Check API audience configuration in appsettings.json
+```
 
 ### Service Startup Issues
 ```bash
@@ -452,7 +627,7 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 ### MCP Connection Issues
 - Verify MCP server is running on port 31339
 - Check SharePoint authentication configuration and permissions:
-  - Ensure Sites.Read.All, Sites.Search.All, and TermStore.Read.All permissions are granted
+  - Ensure Sites.Search.All permissions are granted
   - Verify admin consent for SharePoint-specific permissions
   - Check that the service account has access to SharePoint sites
 - Review MCP server logs for specific SharePoint API errors
