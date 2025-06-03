@@ -4,19 +4,20 @@ A comprehensive proof-of-concept application demonstrating the integration of **
 
 ## 📋 Overview
 
-This application provides a conversational AI interface that can interact with your Microsoft 365 data through natural language. The AI assistant can help you manage calendars, emails, SharePoint sites, OneDrive content, and tasks using Microsoft To Do, featuring structured output responses and intelligent intent classification.
+This application provides a conversational AI interface that can interact with your Microsoft 365 data through natural language. The AI assistant can help you manage calendars, emails, SharePoint sites, OneDrive content, and tasks using Microsoft To Do, featuring structured output responses with dynamic card rendering and intelligent function calling.
 
 ## 🏗️ Architecture
 
 ### System Architecture
 ```
 ┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│    React Client     │     │   ASP.NET Core      │     │     MCP Server      │
-│                     │     │       API           │     │                     │
-│ • Authentication    │────▶│ • Semantic Kernel   │────▶│ • SharePoint API    │
-│ • Chat Interface    │     │ • Intent Detection  │     │ • Tenant Discovery  │
-│ • Card Rendering    │     │ • Plugin System     │     │ • Token Management  │
-│                     │     │ • Structured Output │     │                     │
+│    React Client     │     │   ASP.NET Core      │     │   MCP Server        │
+│   (Port 31337)      │     │    API Server       │     │   (Port 31339)      │
+│                     │     │   (Port 31338)      │     │                     │
+│ • MSAL Auth         │────▶│ • Semantic Kernel   │────▶│ • SharePoint Tools  │
+│ • Chat Interface    │     │ • Function Calling  │     │ • SSE Transport     │
+│ • Card Rendering    │     │ • Plugin System     │     │ • Token Auth        │
+│ • TypeScript        │     │ • Structured Data   │     │ • Tenant Discovery  │
 └─────────────────────┘     └─────────────────────┘     └─────────────────────┘
          │                           │                           │
          │                           ▼                           │
@@ -32,81 +33,144 @@ This application provides a conversational AI interface that can interact with y
                             └─────────────────────┘
 ```
 
-### Information Flow
+### Data Flow Architecture
 ```
-User Input ──▶ Intent Classification ──▶ Function Selection ──▶ Microsoft 365 APIs ──▶ Structured Response
-     │                │                        │                        │                     │
-     │                ▼                        ▼                        ▼                     ▼
-     │        ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-     │        │ AI classifies:  │    │ Semantic Kernel │    │ Graph API calls │    │ Cards/Analysis  │
-     │        │ • Intent type   │    │ executes:       │    │ via Graph SDK   │    │ rendered in UI  │
-     │        │ • Data type     │    │ • Mail plugin   │    │ • Secured with  │    │ • Task cards    │
-     └───────▶│ • Confidence    │───▶│ • Calendar      │───▶│   user tokens   │───▶│ • Email cards   │
-              │ • Parameters    │    │ • SharePoint    │    │ • Proper scopes │    │ • Calendar      │
-              │ • UI format     │    │ • OneDrive      │    │ • Tenant aware  │    │ • Analysis text │
-              └─────────────────┘    │ • To Do tasks   │    └─────────────────┘    └─────────────────┘
-                                     └─────────────────┘
+User Input ──▶ Intent Analysis ──▶ Function Selection ──▶ Microsoft 365 APIs ──▶ Structured Response
+     │               │                      │                        │                     │
+     │               ▼                      ▼                        ▼                     ▼
+     │    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+     │    │ AI determines:  │    │ Semantic Kernel │    │ Graph API calls │    │ Cards/Analysis  │
+     │    │ • Intent type   │    │ auto-invokes:   │    │ with user scope │    │ rendered in UI  │
+     │    │ • Data source   │    │ • ToDo plugin   │    │ • Secure tokens │    │ • Task cards    │
+     └───▶│ • Response mode │───▶│ • Mail plugin   │───▶│ • Real user data│───▶│ • Email cards   │
+          │ • Parameters    │    │ • Calendar      │    │ • Error handling│    │ • Calendar view │
+          │ • Confidence    │    │ • OneDrive      │    │ • Rate limiting │    │ • Analysis text │
+          └─────────────────┘    │ • SharePoint    │    └─────────────────┘    └─────────────────┘
+                                 └─────────────────┘
+```
+
+### MCP Integration Flow
+```
+SharePoint Query ──▶ MCP Client ──▶ SharePoint MCP Server ──▶ SharePoint API ──▶ Structured JSON
+        │                │                     │                       │                │
+        ▼                ▼                     ▼                       ▼                ▼
+┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+│ User asks   │ │ SSE Client  │ │ Tool        │ │ SharePoint  │ │ Site cards  │
+│ "SharePoint │ │ Transport   │ │ Discovery   │ │ Graph API   │ │ displayed   │
+│ sites"      │ │ Connection  │ │ & Execution │ │ with OAuth  │ │ in React    │
+└─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
 ## ✨ Key Features
 
 ### 🤖 **Intelligent Conversational Interface**
-- **Structured Output**: AI responses use JSON schema for consistent formatting
-- **Intent Classification**: Automatic detection of user intent (list, search, create, analyze)
+- **Auto Function Calling**: AI automatically selects and calls appropriate Microsoft Graph APIs
+- **Structured Output**: JSON-based responses with consistent card formatting
+- **Analysis Mode**: AI-generated summaries and insights from your Microsoft 365 data
 - **Context Awareness**: Multi-turn conversations with session memory
-- **Smart UI**: Dynamic card rendering based on response type
+- **Smart UI**: Dynamic card rendering based on data type and user intent
 
 ### 🔗 **Microsoft 365 Integration**
-- **📧 Email**: Read, search, compose, and analyze email threads
+- **📧 Email**: Read, search, compose emails with thread analysis
 - **📅 Calendar**: View events, schedule meetings, check availability
 - **📁 OneDrive**: Browse files, search content, manage documents
 - **📝 Tasks**: Create and manage To Do items with priorities and due dates
-- **🔍 SharePoint**: Find sites and content across tenant with MCP service
+- **🔍 SharePoint**: Find sites and content across tenant via MCP protocol
 
-### 🛡️ **Enterprise Security**
-- **Azure AD Authentication**: Secure token handling with MSAL
-- **On-Behalf-Of Flow**: Service-to-service calls with user context
-- **Dynamic Tenant Discovery**: Multi-tenant support without hardcoding
-- **Token Management**: Automatic refresh and secure storage
+### 🛡️ **Enterprise Security & Authentication**
+- **Azure AD Authentication**: Secure MSAL-based token handling
+- **Graph API Scopes**: Properly scoped permissions for each service
+- **User Context**: All API calls made with user's access token
+- **Token Management**: Automatic refresh and secure kernel data storage
+- **Multi-tenant Ready**: Dynamic tenant discovery without hardcoding
 
-### 🔌 **Extensible Architecture**
-- **Plugin System**: Modular functionality with Semantic Kernel plugins
-- **MCP Integration**: Model Context Protocol for SharePoint operations
-- **Structured Responses**: Type-safe AI responses with JSON schema
-- **Function Calling**: Automatic API selection based on user intent
+### 🔌 **Modern Architecture**
+- **Semantic Kernel**: Microsoft's orchestration framework for AI function calling
+- **MCP Protocol**: Modular tool integration for SharePoint operations
+- **Plugin System**: Extensible architecture for new Microsoft 365 services
+- **TypeScript Frontend**: Type-safe React application with modern tooling
+- **Structured Data Flow**: Consistent kernel data passing for UI rendering
 
 ## 🛠️ Technology Stack
 
-- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS
-- **Backend**: ASP.NET Core 8.0, Semantic Kernel, Microsoft Graph SDK
-- **AI**: Azure OpenAI with structured output and function calling
-- **Authentication**: Microsoft Identity Platform (Azure AD)
-- **Architecture**: Model Context Protocol (MCP) for modular services
+### Frontend
+- **React 18** with TypeScript
+- **Vite** for fast development and building
+- **Tailwind CSS** for styling
+- **MSAL React** for Azure AD authentication
+- **Modern Hooks** for state management
 
-## 🚀 Complete Setup Guide
+### Backend
+- **ASP.NET Core 8.0** Web API
+- **Microsoft Semantic Kernel** for AI orchestration
+- **Microsoft Graph SDK** for Microsoft 365 integration
+- **Model Context Protocol (MCP)** for SharePoint tools
+- **OpenAI SDK** for GPT-4 integration
+
+### AI & Integration
+- **Azure OpenAI** with GPT-4 for natural language processing
+- **Function Calling** for automatic API selection
+- **Structured Output** with JSON schema validation
+- **Microsoft Graph API** for all Microsoft 365 services
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
 1. **.NET 8.0 SDK** - [Download](https://dotnet.microsoft.com/download/dotnet/8.0)
 2. **Node.js 18+** and npm - [Download](https://nodejs.org/)
 3. **Azure AD App Registration** (see Azure Configuration below)
-4. **Azure OpenAI Service** with GPT-4 deployment
+4. **Azure OpenAI Service** or **OpenAI API** with GPT-4 access
 
-### Azure Configuration
+### Quick Setup Scripts
 
-#### 1. Azure AD App Registration
+**Linux/macOS:**
+```bash
+# One-time setup
+./setup-dev.sh
 
-1. **Create App Registration**:
+# Daily development
+./start-all.sh       # Start all services
+./status.sh          # Check service status  
+./stop-all.sh        # Stop all services
+./get-ports.sh       # Show port configuration
+```
+
+**Windows:**
+```powershell
+# One-time setup
+.\setup-dev.ps1
+
+# Daily development  
+.\start-all.ps1      # Start all services
+.\status.ps1         # Check service status
+.\stop-all.ps1       # Stop all services
+.\get-ports.ps1      # Show port configuration
+```
+
+### Service Endpoints
+
+After running `./start-all.sh`:
+
+- **🌐 React App**: https://localhost:31337
+- **🔧 API Server**: https://localhost:31338
+- **📊 API Docs**: https://localhost:31338/swagger
+- **🔍 MCP Server**: https://localhost:31339
+
+## ⚙️ Configuration
+
+### Azure AD App Registration
+
+1. **Create App Registration** in Azure Portal:
    ```
-   Azure Portal → Azure Active Directory → App registrations → New registration
+   Azure Active Directory → App registrations → New registration
    Name: "Semantic Kernel PoC"
    Redirect URI: https://localhost:31337 (Single-page application)
    ```
 
 2. **Configure API Permissions**:
    ```
-   API permissions → Add permission → Microsoft Graph → Delegated permissions:
-   
+   Microsoft Graph → Delegated permissions:
    ✅ User.Read                 (Basic profile)
    ✅ Mail.Read                 (Read emails)
    ✅ Mail.Send                 (Send emails)
@@ -119,85 +183,9 @@ User Input ──▶ Intent Classification ──▶ Function Selection ──�
 
 3. **Grant Admin Consent** (if required by your organization)
 
-4. **Note these values**:
-   - **Tenant ID**: `Directory (tenant) ID` from Overview page
-   - **Client ID**: `Application (client) ID` from Overview page
+### Application Configuration
 
-#### 2. Azure OpenAI Service
-
-1. **Create Azure OpenAI Resource**:
-   ```
-   Azure Portal → Create resource → Azure OpenAI → Create
-   ```
-
-2. **Deploy GPT-4 Model**:
-   ```
-   Azure OpenAI Studio → Deployments → Create new deployment
-   Model: gpt-4 or gpt-4-turbo
-   Deployment name: gpt-4 (remember this name)
-   ```
-
-3. **Note these values**:
-   - **Endpoint**: From resource overview (e.g., `https://your-resource.openai.azure.com/`)
-   - **API Key**: From Keys and Endpoint section
-
-### Local Development Setup
-
-### Quick Start Scripts
-
-**Linux/macOS (Bash):**
-```bash
-# Initial setup (one-time)
-./setup-dev.sh                   # Set up development environment
-
-# Daily development
-./start-all.sh                   # Start all services
-./status.sh                      # Check service status  
-./stop-all.sh                    # Stop all services
-./get-ports.sh                   # Show port configuration
-```
-
-**Windows (PowerShell):**
-```powershell
-# Initial setup (one-time)
-.\setup-dev.ps1                  # Set up development environment
-
-# Daily development  
-.\start-all.ps1                  # Start all services
-.\status.ps1                     # Check service status
-.\stop-all.ps1                   # Stop all services
-.\get-ports.ps1                  # Show port configuration
-```
-
-**💡 TIP**: Use the setup script for first-time configuration, then use start/stop scripts for daily development.
-
----
-
-#### 1. Clone and Install Dependencies
-
-```bash
-# Clone repository
-git clone <your-repository-url>
-cd SemanticKernelPoc
-
-# Install .NET dependencies
-dotnet restore
-
-# Install Node.js dependencies
-cd SemanticKernelPoc.Web
-npm install
-cd ..
-```
-
-#### 2. Configure API Settings
-
-```bash
-# Copy template to create your config
-cp SemanticKernelPoc.Api/appsettings.Development.template.json \
-   SemanticKernelPoc.Api/appsettings.Development.json
-```
-
-Edit `SemanticKernelPoc.Api/appsettings.Development.json`:
+**API Configuration** (`SemanticKernelPoc.Api/appsettings.Development.json`):
 ```json
 {
   "AzureAd": {
@@ -206,30 +194,18 @@ Edit `SemanticKernelPoc.Api/appsettings.Development.json`:
     "ClientId": "YOUR_CLIENT_ID_HERE"
   },
   "SemanticKernel": {
-    "AzureOpenAI": {
-      "Endpoint": "https://your-resource.openai.azure.com/",
-      "ApiKey": "YOUR_OPENAI_API_KEY_HERE",
-      "DeploymentName": "gpt-4"
-    }
+    "UseAzureOpenAI": false,
+    "ApiKey": "YOUR_OPENAI_API_KEY_HERE",
+    "DeploymentOrModelId": "gpt-4o-mini",
+    "Endpoint": ""
   },
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft.AspNetCore": "Warning"
-    }
+  "McpServer": {
+    "Url": "https://localhost:31339"
   }
 }
 ```
 
-#### 3. Configure React Client
-
-```bash
-# Copy template to create your config
-cp SemanticKernelPoc.Web/src/config/config.example.json \
-   SemanticKernelPoc.Web/src/config/config.local.json
-```
-
-Edit `SemanticKernelPoc.Web/src/config/config.local.json`:
+**Frontend Configuration** (`SemanticKernelPoc.Web/src/config/config.local.json`):
 ```json
 {
   "azure": {
@@ -242,275 +218,259 @@ Edit `SemanticKernelPoc.Web/src/config/config.local.json`:
 }
 ```
 
-#### 4. Setup HTTPS Certificates
-
-The startup script will automatically generate self-signed certificates. To trust them:
-
-**macOS**:
-```bash
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/localhost.crt
-```
-
-**Windows** (PowerShell as Administrator):
-```powershell
-Import-Certificate -FilePath "certs\localhost.crt" -CertStoreLocation Cert:\LocalMachine\Root
-```
-
-**Linux**:
-```bash
-sudo cp certs/localhost.crt /usr/local/share/ca-certificates/
-sudo update-ca-certificates
-```
-
-#### 5. Start the Application
-
-```bash
-# Start all services (API, MCP Server, React Client)
-./start-all.sh
-```
-
-**Access Points**:
-- **React App**: https://localhost:31337
-- **API Documentation**: https://localhost:31338/swagger
-- **MCP Server**: http://localhost:3001 (internal)
-
-#### 6. Stop the Application
-
-```bash
-./stop-all.sh
-```
-
-### Configuration Security
-
-#### File Structure
-```
-SemanticKernelPoc/
-├── SemanticKernelPoc.Api/
-│   ├── appsettings.json                        # ✅ Base config (committed)
-│   ├── appsettings.Development.template.json  # ✅ Template (committed)
-│   └── appsettings.Development.json           # 🔒 Your secrets (git-ignored)
-├── SemanticKernelPoc.Web/src/config/
-│   ├── config.example.json                    # ✅ Template (committed)
-│   └── config.local.json                      # 🔒 Your secrets (git-ignored)
-```
-
-#### Security Features
-- ✅ **Git-ignored**: Secret files never committed to version control
-- ✅ **Template-based**: Clear structure for required configuration
-- ✅ **Fallback safe**: App works with defaults if local config missing
-- ✅ **No environment variables**: Simple file-based approach
-
-### Troubleshooting Common Issues
-
-#### Authentication Issues
-```bash
-# Check your Azure AD configuration
-# Verify tenant ID and client ID in both config files
-# Ensure redirect URI matches exactly: https://localhost:31337
-```
-
-#### Certificate Issues
-```bash
-# Regenerate certificates
-rm -rf certs/
-./start-all.sh  # Will regenerate automatically
-
-# Re-trust certificates (see HTTPS setup above)
-```
-
-#### Port Conflicts
-```bash
-# Check if ports are in use
-lsof -i :31337  # React (frontend)
-lsof -i :31338  # API (backend)
-lsof -i :3001   # MCP Server
-
-# Kill conflicting processes
-kill -9 <PID>
-```
-
-#### Permission Issues
-```bash
-# Verify Azure AD permissions are granted
-# Check admin consent status in Azure Portal
-# Ensure user has access to SharePoint/OneDrive
-```
-
 ## 📁 Project Structure
 
 ```
 SemanticKernelPoc/
 ├── SemanticKernelPoc.Api/              # 🌐 ASP.NET Core Web API
-│   ├── Controllers/                    #   • Chat endpoint with structured output
-│   ├── Plugins/                        #   • Semantic Kernel plugins for M365
-│   │   ├── Calendar/                   #   • Calendar operations
-│   │   ├── Mail/                       #   • Email management
-│   │   ├── OneDrive/                   #   • File operations
-│   │   ├── SharePoint/                 #   • SharePoint MCP integration
-│   │   └── ToDo/                       #   • Task management
-│   ├── Services/                       #   • Intent detection & analysis
+│   ├── Controllers/
+│   │   └── ChatController.cs           #   • Main chat endpoint with Semantic Kernel
+│   ├── Plugins/                        #   • Microsoft Graph plugins
+│   │   ├── Calendar/CalendarPlugin.cs  #   • Calendar events and scheduling
+│   │   ├── Mail/MailPlugin.cs          #   • Email management and search
+│   │   ├── OneDrive/OneDrivePlugin.cs  #   • File operations and search
+│   │   └── ToDo/ToDoPlugin.cs          #   • Task management with To Do
+│   ├── Services/
+│   │   ├── Graph/                      #   • Microsoft Graph integration
+│   │   ├── Memory/                     #   • Conversation memory
+│   │   └── Shared/                     #   • Card building and analysis services
 │   └── Models/                         #   • Structured response models
 ├── SemanticKernelPoc.McpServer/        # 🔧 Model Context Protocol Service
-│   ├── Tools/                          #   • SharePoint search tools
-│   ├── Services/                       #   • Tenant discovery & auth
+│   ├── Tools/
+│   │   └── SharePointSearchTool.cs     #   • SharePoint search via MCP
+│   ├── Services/
+│   │   └── SharePointSearchService.cs  #   • SharePoint Graph API integration
 │   └── Models/                         #   • SharePoint data models
 ├── SemanticKernelPoc.Web/              # ⚛️  React Frontend
 │   ├── src/
-│   │   ├── components/                 #   • Chat interface & card components
+│   │   ├── components/                 #   • Chat interface and card components
 │   │   ├── config/                     #   • Azure AD configuration
-│   │   ├── hooks/                      #   • Authentication & API hooks
-│   │   └── services/                   #   • API communication
-│   └── package.json                    #   • Dependencies & scripts
+│   │   ├── hooks/                      #   • Authentication and API hooks
+│   │   └── services/                   #   • API communication services
+│   ├── package.json                    #   • Dependencies and build scripts
+│   └── vite.config.ts                  #   • Vite configuration
 ├── certs/                              # 🔐 HTTPS certificates
 ├── logs/                               # 📋 Application logs
-├── setup-dev.sh/ps1                   # 🛠️ Development environment setup
+├── setup-dev.sh/ps1                   # 🛠️  Development environment setup
 ├── start-all.sh/ps1                   # 🚀 Start all services
 ├── stop-all.sh/ps1                    # 🛑 Stop all services
 ├── status.sh/ps1                      # 📊 Check service status
-├── get-ports.sh/ps1                   # 🔌 Port configuration info
-└── README.md                           # 📖 This documentation
-```
-
-## 🔄 Application Flow
-
-### User Interaction Flow
-```
-1. User Authentication
-   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-   │ User opens  │───▶│ Azure AD    │───▶│ React app   │
-   │ React app   │    │ login flow  │    │ receives    │
-   │ in browser  │    │ (MSAL)      │    │ auth tokens │
-   └─────────────┘    └─────────────┘    └─────────────┘
-
-2. Chat Interaction
-   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-   │ User types  │───▶│ React sends │───▶│ API receives│
-   │ message in  │    │ request to  │    │ message +   │
-   │ chat box    │    │ /api/chat   │    │ user token  │
-   └─────────────┘    └─────────────┘    └─────────────┘
-
-3. AI Processing
-   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-   │ Intent      │───▶│ Semantic    │───▶│ Plugin      │
-   │ detection   │    │ Kernel      │    │ execution   │
-   │ (AI-based)  │    │ orchestrates│    │ (Graph API) │
-   └─────────────┘    └─────────────┘    └─────────────┘
-
-4. Response Generation
-   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-   │ Structured  │───▶│ Cards/text  │───▶│ UI renders  │
-   │ response    │    │ formatted   │    │ for React   │
-   │ (JSON)      │    │ for React   │    │ with cards  │
-   └─────────────┘    └─────────────┘    └─────────────┘
-```
-
-### Technical Flow
-```
-Authentication (Azure AD) ──▶ Chat Interface (React) ──▶ API Gateway (ASP.NET)
-                                       │                          │
-                                       ▼                          ▼
-User Input ────────────────────▶ Intent Classification ──▶ Semantic Kernel
-                                       │                          │
-                                       ▼                          ▼
-Plugin Selection ◀──────────── Function Calling ◀────── AI Orchestration
-     │                                                            │
-     ▼                                                            ▼
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐     ┌─────────────┐
-│   Email     │  │  Calendar   │  │ SharePoint  │ ... │   To Do     │
-│   Plugin    │  │   Plugin    │  │ MCP Server  │     │   Plugin    │
-└─────────────┘  └─────────────┘  └─────────────┘     └─────────────┘
-     │                  │                  │                   │
-     ▼                  ▼                  ▼                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Microsoft Graph API                             │
-│  • Authentication  • Mail  • Calendar  • OneDrive  • SharePoint    │
-└─────────────────────────────────────────────────────────────────────┘
+└── get-ports.sh/ps1                   # 🔌 Port configuration info
 ```
 
 ## 🎯 Usage Examples
 
 ### Task Management
 ```
-User: "Show me my tasks for this week"
-→ Intent: list, task, confidence: 0.95
-→ Plugin: ToDoPlugin.GetRecentNotes
-→ Result: Task cards with priorities and due dates
+👤 User: "Show me my tasks for this week"
+🤖 AI: Automatically calls ToDoPlugin.GetRecentNotes()
+📋 Result: Task cards with priorities, due dates, and completion status
 ```
 
-### Email Analysis
+### Email Analysis  
 ```
-User: "Summarize my emails from John about the project"
-→ Intent: analyze, email, confidence: 0.90
-→ Plugin: MailPlugin.SearchEmails + Analysis
-→ Result: AI-generated summary of email threads
+👤 User: "Summarize my emails from John about the project"
+🤖 AI: Calls MailPlugin.SearchEmails() + Analysis mode
+📧 Result: AI-generated summary of email conversations
 ```
 
-### Calendar Coordination
+### Calendar Planning
 ```
-User: "When is my next free 1-hour slot tomorrow?"
-→ Intent: search, calendar, confidence: 0.85
-→ Plugin: CalendarPlugin.GetUpcomingEvents
-→ Result: Available time slots with calendar context
+👤 User: "What's my schedule for tomorrow?"
+🤖 AI: Calls CalendarPlugin.GetRecentEvents()
+📅 Result: Calendar cards with meeting details and availability
 ```
 
 ### SharePoint Discovery
 ```
-User: "Find SharePoint sites related to our Q4 planning"
-→ Intent: search, sharepoint, confidence: 0.92
-→ Plugin: SharePointMcpPlugin via MCP Server
-→ Result: Relevant SharePoint sites with descriptions
+👤 User: "Find SharePoint sites for our Q4 planning"
+🤖 AI: Calls SharePoint MCP tools via protocol
+🔍 Result: Relevant SharePoint sites with metadata
 ```
 
-## 🔧 Advanced Configuration
+### File Search
+```
+👤 User: "Find my PowerPoint presentations about sales"
+🤖 AI: Calls OneDrivePlugin.SearchFiles()
+📁 Result: File cards with download links and metadata
+```
 
-### Logging and Monitoring
+## 🔄 Application Flow
+
+### Authentication Flow
+```
+1. User opens React app → 2. MSAL redirects to Azure AD → 3. User signs in
+                              ↓
+4. Access token received ← 3. Token validation ← 2. Authorization code returned
+                              ↓
+5. Token stored in React state and sent with each API request
+```
+
+### Chat Interaction Flow
+```
+1. User Input
+   ┌─────────────────┐
+   │ "Show my tasks" │
+   └─────────────────┘
+           │
+           ▼
+2. React Frontend
+   ┌─────────────────┐
+   │ POST /api/chat  │
+   │ + Bearer token  │
+   └─────────────────┘
+           │
+           ▼
+3. ChatController
+   ┌─────────────────┐
+   │ • Parse request │
+   │ • Create kernel │
+   │ • Set user data │
+   └─────────────────┘
+           │
+           ▼
+4. Semantic Kernel
+   ┌─────────────────┐
+   │ • Analyze input │
+   │ • Select plugin │
+   │ • Call function │
+   └─────────────────┘
+           │
+           ▼
+5. Plugin Execution
+   ┌─────────────────┐
+   │ • Graph API     │
+   │ • Process data  │
+   │ • Format output │
+   └─────────────────┘
+           │
+           ▼
+6. Structured Response
+   ┌─────────────────┐
+   │ • Cards data    │
+   │ • Text response │
+   │ • Metadata      │
+   └─────────────────┘
+           │
+           ▼
+7. React UI Rendering
+   ┌─────────────────┐
+   │ • Render cards  │
+   │ • Display text  │
+   │ • Update state  │
+   └─────────────────┘
+```
+
+## 🔧 Development
+
+### Adding New Plugins
+
+1. **Create Plugin Class**:
+```csharp
+public class YourPlugin : BaseGraphPlugin
+{
+    [KernelFunction]
+    [Description("Your function description")]
+    public async Task<string> YourFunction(
+        Kernel kernel,
+        [Description("Parameter description")] string parameter)
+    {
+        // Implementation using Microsoft Graph
+    }
+}
+```
+
+2. **Register in ChatController**:
+```csharp
+var yourPlugin = new YourPlugin(graphService, graphClientFactory, logger);
+kernel.Plugins.AddFromObject(yourPlugin, "YourPlugin");
+```
+
+### Debugging and Monitoring
+
 ```bash
 # Real-time log monitoring
 tail -f logs/api-server.log      # API service logs
 tail -f logs/mcp-server.log      # MCP service logs  
-tail -f logs/client.log          # React client logs
 
-# Log locations
-logs/
-├── api-server.log               # ASP.NET Core API
-├── mcp-server.log              # MCP SharePoint service
-└── client.log                  # Vite development server
+# Debug specific components
+export ASPNETCORE_ENVIRONMENT=Development
+dotnet run --project SemanticKernelPoc.Api --verbosity detailed
 ```
 
-### Development Customization
-```json
-// appsettings.Development.json - Adjust log levels
-{
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft": "Warning",
-      "SemanticKernelPoc": "Debug"    // Your app logs
-    }
-  }
-}
+### Testing MCP Integration
+
+```bash
+# Test MCP server directly
+curl https://localhost:31339/sse
+
+# Check tool discovery
+curl https://localhost:31339/tools
+
+# Verify SharePoint authentication
+# Check logs for token validation
 ```
 
-### Plugin Development
-```csharp
-// Add new plugins in SemanticKernelPoc.Api/Plugins/
-[KernelFunction]
-[Description("Your plugin description")]
-public async Task<string> YourFunction(
-    [Description("Parameter description")] string parameter)
-{
-    // Implementation
-}
+## 🚨 Troubleshooting
+
+### Authentication Issues
+- Verify Azure AD app registration configuration
+- Check redirect URI matches exactly: `https://localhost:31337`
+- Ensure proper API permissions are granted and consented
+- Verify tenant ID and client ID in both config files
+
+### Service Startup Issues
+```bash
+# Check port availability
+./get-ports.sh
+
+# Kill processes using required ports
+lsof -i :31337 | awk 'NR>1 {print $2}' | xargs kill -9
+lsof -i :31338 | awk 'NR>1 {print $2}' | xargs kill -9
+lsof -i :31339 | awk 'NR>1 {print $2}' | xargs kill -9
 ```
+
+### SSL Certificate Issues
+```bash
+# Regenerate certificates
+rm -rf certs/
+./start-all.sh  # Will regenerate automatically
+
+# Trust certificates (macOS)
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/localhost.crt
+```
+
+### MCP Connection Issues
+- Verify MCP server is running on port 31339
+- Check SharePoint authentication configuration
+- Review MCP server logs for specific errors
+- Ensure user has SharePoint access permissions
+
+## 📈 Performance Considerations
+
+- **Token Caching**: Implement token cache for production deployments
+- **Rate Limiting**: Microsoft Graph APIs have rate limits
+- **Connection Pooling**: Configure HTTP client connection pooling
+- **Logging**: Adjust log levels for production environments
+- **Memory Management**: Monitor Semantic Kernel memory usage
+
+## 🔐 Security Best Practices
+
+- **Secrets Management**: Use Azure Key Vault for production
+- **Token Validation**: Implement proper JWT token validation
+- **CORS Configuration**: Restrict CORS to known origins
+- **HTTPS Only**: Enforce HTTPS in production
+- **Audit Logging**: Log all Microsoft Graph API access
 
 ## 🤝 Contributing
 
-This proof-of-concept demonstrates modern AI integration with Microsoft 365. Key areas for extension:
+This proof-of-concept demonstrates modern AI integration patterns. Areas for extension:
 
-- **New Plugins**: Add support for Teams, Planner, or other M365 services
-- **Enhanced UI**: Improve card designs and interaction patterns
-- **AI Models**: Experiment with different OpenAI models and parameters
-- **Security**: Implement additional security layers and monitoring
+- **New Microsoft 365 Services**: Teams, Planner, Yammer integration
+- **Enhanced AI Models**: Experiment with different GPT models and parameters
+- **Advanced UI**: Improve card designs and interaction patterns
+- **Performance Optimization**: Implement caching and optimization strategies
+- **Testing**: Add comprehensive unit and integration tests
 
 ## 📄 License
 
@@ -518,4 +478,10 @@ This project is provided as-is for educational and proof-of-concept purposes.
 
 ---
 
-🎉 **You're all set!** Visit https://localhost:31337 to start chatting with your AI assistant. 
+🎉 **Ready to start!** 
+
+1. Run `./setup-dev.sh` (or `.ps1` on Windows)
+2. Run `./start-all.sh` to launch all services
+3. Visit https://localhost:31337 to start chatting with your AI assistant!
+
+The AI will automatically call the appropriate Microsoft 365 APIs based on your natural language requests and display the results as interactive cards. 
